@@ -312,6 +312,14 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
             red, green, blue = detail.getpixel((80, 60))
             self.assertGreater(red, 200)
             self.assertLess(green, 40)
+            after = Image.new("RGB", img.size, (0, 40, 250))
+            after.save(self.out / "after.png")
+            pair = await preview(compare_with="after.png", crop=[640, 280, 160, 120])
+            self.assertEqual(pair.size, (322, 120))
+            self.assertEqual(pair.getpixel((80, 60)), (230, 20, 20))
+            self.assertEqual(pair.getpixel((242, 60)), (0, 40, 250))
+            bad = await client.call_tool("preview_result", {"file": "chart.png", "compare_with": str(self.library / "test.3FR")})
+            self.assertTrue(bad.isError)
             for rect in [
                 [1, 2, 3],
                 [-1, 0, 10, 10],

@@ -397,8 +397,8 @@ def watermark_result(
 
 
 @server.tool(title="检查成片 · 整图或局部预览")
-def preview_result(file: str, crop: list[int] | None = None) -> Image:
-    """Return a 1280px overview, or a native-resolution crop [x, y, width, height] from the top left."""
+def preview_result(file: str, crop: list[int] | None = None, compare_with: str | None = None) -> Image:
+    """Return a 1280px overview, or a native-resolution crop [x, y, width, height] from the top left. Pass compare_with for an SDR comparison: file on the left, compare_with on the right."""
     path = (output / file).resolve(strict=True)
     if not path.is_relative_to(output) or path.suffix.lower() not in {
         ".jpg",
@@ -408,6 +408,17 @@ def preview_result(file: str, crop: list[int] | None = None) -> Image:
         ".png",
     }:
         raise ValueError("请指定输出目录中的成片")
+    if compare_with is not None:
+        import io
+        from tone_controls import compare_previews
+
+        after = (output / compare_with).resolve(strict=True)
+        if not after.is_relative_to(output):
+            raise ValueError("请选择输出目录中的成片")
+        canvas = compare_previews(path, after, crop)
+        encoded = io.BytesIO()
+        canvas.save(encoded, format="PNG")
+        return Image(data=encoded.getvalue(), format="png")
     transform = ["-Z", "1280"]
     if crop is not None:
         if len(crop) != 4:
