@@ -109,3 +109,7 @@ MCP 调用 `analyze_exposure` 时传入 `{"file":"成片.jpg","region":[0,0,1,0.
 `phocus render 照片.3FR --radial-mask 人脸 0.48 0.36 0.12 0.18 0 0.35 inside 0.5` 会在椭圆内提亮半档。名称之后依次为中心 X/Y、水平和垂直半径、角度（度）、羽化（0–1）、inside 或 outside、曝光 EV。中心和半径相对未裁切原图的宽高。同名简单椭圆会更新，复杂图层请换一个名称。
 
 MCP 的 `make_variant` 与 `render_photos` 接受 `radial_masks: [{"name":"人脸","center":[0.48,0.36],"radii":[0.12,0.18],"feather":0.35,"ev":0.5}]`。
+
+## 并排对比成片
+
+`phocus compare 调整前.jpg 调整后.jpg --crop 3500 2100 600 600` 生成左前右后的无损 PNG，两侧显示同一区域的原始像素。省略 `--crop` 则显示整图。支持同一构图、相同显示尺寸的 SDR JPEG/PNG；软件按 EXIF 方向定位并转换到 sRGB。单次 MCP 调用 `preview_result(file=调整前, compare_with=调整后, crop=[3500,2100,600,600])` 即可返回对照图。

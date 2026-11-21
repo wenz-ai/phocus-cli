@@ -255,3 +255,31 @@ def sample_color(path, x, y, radius=4):
         "saturation": round(saturation, 4),
         "value": round(brightness, 4),
     }
+
+
+def compare_previews(before, after, crop=None):
+    """Return an sRGB contact sheet with before on the left and after on the right."""
+    from PIL import Image
+
+    panels = []
+    original_size = None
+    for path in (before, after):
+        with oriented_sdr(path) as view:
+            if original_size is not None and view.size != original_size:
+                raise ValueError("两版画面的显示尺寸须一致；请导出相同裁切和尺寸")
+            original_size = view.size
+            if crop is None:
+                view.thumbnail((640, 960), Image.Resampling.LANCZOS)
+                patch = view
+            else:
+                x, y, w, h = crop
+                if not (0 <= x and 0 <= y and 1 <= w <= 1280 and 1 <= h <= 1280
+                        and x + w <= view.width and y + h <= view.height):
+                    raise ValueError("选区须在图内，每边为 1–1280 像素")
+                patch = view.crop((x, y, x+w, y+h))
+            panels.append(srgb_pixels(patch).copy())
+    width, height = panels[0].size
+    canvas = Image.new("RGB", (width * 2 + 2, height), (96, 96, 96))
+    canvas.paste(panels[0], (0, 0))
+    canvas.paste(panels[1], (width + 2, 0))
+    return canvas
