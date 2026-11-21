@@ -68,6 +68,7 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
                 {t.name for t in tools.tools},
                 {
                     "capabilities",
+                    "sample_color",
                     "denoise_raw",
                     "watermark_result",
                     "export_photos",
@@ -202,6 +203,45 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
                 "export_photos", {"files": ["escape.jpg"], "delivery": {}}
             )
             self.assertTrue(res.isError)
+
+    async def test_color_sampling_and_offline_recipe(self):
+        async with self.connected() as client:
+            img = Image.new("RGB", (24, 16), "yellow")
+            img.paste((220, 220, 220), (12, 0, 24, 16))
+            img.save(self.library / "colors.png")
+            for x, expected in ((0.0, 60.0), (1.0, None)):
+                reply = await client.call_tool(
+                    "sample_color",
+                    {"file": "colors.png", "x": x, "y": 0.5, "radius": 2},
+                )
+                self.assertFalse(reply.isError)
+                self.assertEqual(
+                    json.loads(reply.content[0].text)["estimated_hue"], expected
+                )
+            path = self.library / "test.3FR.phos"
+            data = plistlib.loads(path.read_bytes())
+            native = data["ImageSettings"][0]["ImageCorrection"]
+            for suffix in ("SrcH", "SrcL", "SrcS", "Angle", "DstH", "DstL", "DstS"):
+                native["Selective" + suffix] = []
+            for chan in ("", "Red", "Green", "Blue"):
+                native["Gamma" + chan] = 2.0
+            native.update(Shadow=[0] * 4, Highlight=[16320] * 4)
+            path.write_bytes(plistlib.dumps(data))
+            reply = await client.call_tool(
+                "make_variant",
+                {
+                    "photo": "test.3FR",
+                    "color_bands": [{"hue": "yellow", "shift": 8}],
+                    "levels": {"rgb": {"black": 12, "mid": 1.15, "white": 247}},
+                },
+            )
+            self.assertFalse(reply.isError, reply.content)
+            variant = json.loads(reply.content[0].text)
+            reply = await client.call_tool("inspect_photo", {"photo": variant["raw"]})
+            self.assertFalse(reply.isError)
+            info = json.loads(reply.content[0].text)
+            self.assertEqual(info["color_bands"][0]["shift"], 8)
+            self.assertEqual(info["levels"]["blue"], [12, 1.15, 247])
 
     async def test_overview_and_detail_preview(self):
         async with self.connected() as client:

@@ -56,3 +56,29 @@ codex mcp add phocus -- "$(command -v phocus)" mcp
 ## 更多原生调整
 
 `sharpen_radius` 以像素为单位，步长 0.1，可搭配 `sharpen_threshold`、`sharpen_dark_limit`。黑白通道混合使用 `mono_red`、`mono_green`、`mono_blue`，写入时启用 Phocus 黑白处理。颗粒支持 `grain_type`（0–2）和 `grain_color`。镜头与透视参数见 `phocus capabilities` 中的 `lens_corrections`、`vignette_amount`、`defringe_*` 和 `keystone_*`。在 `variant` 或 `render` 中传入 `--straighten 3.5` 可拉直 3.5 度，也可配合直角旋转。
+
+## 调整一段颜色
+
+例如黄色杯盖偏艳，希望减一点饱和度、把黄色略微推向绿色：
+
+```sh
+phocus render "/photos/sample.3FR" --color-band yellow 25 12 0.75 0
+```
+
+五个值依次是**中心色相、选色角度、色相偏移、饱和度倍率、明度调整**。中心可以用 0 到小于 360 的度数，或 red、orange、yellow、green、cyan、blue、purple、magenta。角度 1–90°，偏移 −45 到 +45°，饱和度 0.3–1.7（1 为原值），明度 −50 到 +50（0 为原值）。同一命令可以重复传 `--color-band`。已存在的同中心选色点会更新，其他选色点保留。`--clear-color-bands` 清除工作副本已有的选色点，也可与新选色组合使用。画面中其他相近颜色也会受到影响。
+
+不知道目标色相时，对渲染的 SDR 预览运行 `phocus sample preview.jpg --at 0.7 0.6`。坐标以左上角为原点、范围 0–1，结果包含一小块区域的平均 sRGB 值及估算色相。色彩接近中性时 `estimated_hue` 返回 null。这个数值可用作选色起点，具体效果以 RAW 导出为准。
+
+## 控制黑场、白场和中间调
+
+```sh
+phocus render "/photos/sample.3FR" --levels rgb 12 1.2 242 --levels blue 3 1.0 245
+```
+
+顺序是**通道、黑场、中间调、白场**。黑白场范围 0–255，黑场必须小于白场；中间调 1 为原值，支持 0.1–4。RGB 设置一组共同的色阶，red、green、blue 可以分别覆盖；只给单通道时其他通道沿用原有设置。
+
+MCP 的 `render_photos` 和 `make_variant` 支持同样的设置。例如：
+```json
+{"photos":["sample.3FR"],"color_bands":[{"hue":"yellow","width":25,"shift":12,"saturation":0.75}],"levels":{"rgb":{"black":12,"mid":1.2,"white":242}}}
+```
+用 `sample_color` 取样，或用 `inspect_photo` 查看已保存的 `levels` 与 `color_bands`。
