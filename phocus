@@ -617,6 +617,7 @@ def main():
     export.add_argument("sources", type=Path, nargs="+")
     export.add_argument("--out", type=Path, default=paths["out"])
     for cmd in (run, export):
+        cmd.add_argument("--batch-id", help="使用相同名称、输入和配方接续未完成的批次")
         cmd.add_argument("--export-format", choices=("jpeg", "png"))
         cmd.add_argument("--long-edge", type=int)
         cmd.add_argument("--jpeg-quality", type=int)
@@ -826,20 +827,10 @@ def main():
     if args.cmd == "export":
         from watermark import export_image
 
-        outputs = []
-        for src in args.sources:
-            try:
-                outputs.append(
-                    {
-                        "source": str(src.resolve()),
-                        **export_image(src.resolve(), args.out.resolve(), **delivery),
-                    }
-                )
-            except (OSError, ValueError) as exc:
-                outputs.append({"source": str(src), "error": str(exc)})
-                print(json.dumps(outputs, ensure_ascii=False))
-                sys.exit(1)
-        return outputs
+        def process(src, dest):
+            return {"source": str(src), **export_image(src, dest, **delivery)}
+
+        return process_files(args, {"command": "export", "delivery": delivery}, process)
     changes = adjustment_args(args)
     if args.cmd == "variant":
         if not changes:
@@ -849,25 +840,35 @@ def main():
         return variant(args.source.resolve(), args.out.resolve(), changes)
     if args.timeout < 1:
         raise ValueError("--timeout 必须大于 0")
-    output = []
-    for src in args.sources:
-        try:
-            output.append(
-                render(
-                    src.resolve(),
-                    args.watch.resolve(),
-                    args.spool.resolve(),
-                    args.out.resolve(),
-                    changes,
-                    args.timeout,
-                    delivery,
-                )
-            )
-        except (ValueError, OSError) as err:
-            output.append({"source": str(src), "error": str(err)})
-            print(json.dumps(output, ensure_ascii=False))
-            sys.exit(1)
-    return output
+    watch, spool = args.watch.resolve(), args.spool.resolve()
+
+    def process(src, dest):
+        return render(src, watch, spool, dest, changes, args.timeout, delivery)
+
+    recipe = {"command": "render", "changes": changes, "delivery": delivery,
+              "watch": str(watch), "spool": str(spool)}
+    return process_files(args, recipe, process)
+
+
+def process_files(args, recipe, process):
+    sources = [path.resolve() for path in args.sources]
+    dest = args.out.resolve()
+    if args.batch_id is not None:
+        from photo_batch import run_batch
+
+        rows = run_batch(sources, dest, args.batch_id, recipe, process, lock)
+    else:
+        rows = []
+        for source in sources:
+            try:
+                rows.append(process(source, dest))
+            except (ValueError, OSError) as exc:
+                rows.append({"source": str(source), "error": str(exc)})
+                break
+    if any("error" in row for row in rows):
+        print(json.dumps(rows, ensure_ascii=False))
+        sys.exit(1)
+    return rows
 
 
 if __name__ == "__main__":

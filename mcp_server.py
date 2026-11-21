@@ -23,8 +23,8 @@ cli = Path(__file__).resolve().with_name("phocus")
 server = FastMCP("Phocus Local")
 
 
-def source_path(name: str) -> Path:
-    path = (library / name).resolve(strict=True)
+def source_path(name: str, *, require_exists=True) -> Path:
+    path = (library / name).resolve(strict=require_exists)
     allowed = next(
         (base for base in (library, output) if path.is_relative_to(base)), None
     )
@@ -36,13 +36,17 @@ def source_path(name: str) -> Path:
     return path
 
 
-def call(*args):
+def call(*args, partial_results=False):
     proc = subprocess.run(
         [sys.executable, str(cli), *map(str, args)],
         text=True,
         check=False,
         capture_output=True,
     )
+    if proc.returncode and partial_results and not proc.stderr.strip() and proc.stdout.strip():
+        rows = json.loads(proc.stdout)
+        if isinstance(rows, list) and any(row.get("status") == "failed" for row in rows):
+            return rows
     if proc.returncode:
         raise ValueError(proc.stderr.strip() or proc.stdout.strip())
     return json.loads(proc.stdout)
@@ -191,8 +195,8 @@ def capabilities() -> dict:
     return call("capabilities")
 
 
-def sdr_path(file: str) -> Path:
-    path = (library / file).resolve(strict=True)
+def sdr_path(file: str, *, require_exists=True) -> Path:
+    path = (library / file).resolve(strict=require_exists)
     if not any(
         path.is_relative_to(root) for root in (library, output)
     ) or path.suffix.lower() not in {".jpeg", ".jpg", ".png"}:
@@ -270,13 +274,14 @@ def render_photos(
     linear_masks: list[LinearMask] | None = None,
     radial_masks: list[RadialMask] | None = None,
     delivery: Delivery | None = None,
+    batch_id: str | None = None,
 ) -> list[dict]:
     """Render RAW masters with optional SDR delivery copies. Curves map rgb/red/green/blue/luma to [x,y] points (0..255); crop is normalized LTRB and rotate is degrees CCW."""
     if not photos:
         raise ValueError("photos 至少需要一张照片")
     return call(
         "render",
-        *(source_path(photo) for photo in photos),
+        *(source_path(photo, require_exists=batch_id is None) for photo in photos),
         "--watch",
         watch,
         "--spool",
@@ -296,16 +301,19 @@ def render_photos(
             radial_masks=radial_masks,
         ),
         *delivery_args(delivery),
+        *(["--batch-id", batch_id] if batch_id is not None else []),
+        partial_results=batch_id is not None,
     )
 
 
 @server.tool(title="交付 · 批量导出")
-def export_photos(files: list[str], delivery: Delivery) -> list[dict]:
+def export_photos(files: list[str], delivery: Delivery, batch_id: str | None = None) -> list[dict]:
     """Batch export finished SDR JPEG/PNG files from library or output, with optional sizing, sRGB and watermark."""
     if not files:
         raise ValueError("请选择至少一张已渲染图片")
-    paths = [sdr_path(file) for file in files]
-    return call("export", *paths, "--out", output, *delivery_args(delivery))
+    paths = [sdr_path(file, require_exists=batch_id is None) for file in files]
+    options = ["--batch-id", batch_id] if batch_id is not None else []
+    return call("export", *paths, "--out", output, *delivery_args(delivery), *options, partial_results=batch_id is not None)
 
 
 @server.tool(title="交付 · 查看画框款式")
