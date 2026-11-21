@@ -1,5 +1,8 @@
 """Native Phocus histogram and selective color settings (sidecar 31 / correction 11)."""
 
+from contextlib import contextmanager
+
+
 CHANNELS = ("rgb", "red", "green", "blue")
 GAMMA = ("Gamma", "GammaRed", "GammaGreen", "GammaBlue")
 BAND_KEYS = (
@@ -142,14 +145,10 @@ def inspect_bands(settings):
     ]
 
 
-def sample_color(path, x, y, radius=4):
-    """Estimate the hue of a displayed patch, using oriented sRGB pixels."""
-    import colorsys
-    import io
-    from PIL import Image, ImageOps, ImageCms, ImageStat
+@contextmanager
+def oriented_sdr(path):
+    from PIL import Image, ImageOps
 
-    if not (0 <= x <= 1 and 0 <= y <= 1 and 0 <= radius <= 64):
-        raise ValueError("取样坐标使用 0–1，半径使用 0–64 像素")
     Image.MAX_IMAGE_PIXELS = 155_000_000
     with Image.open(path) as image:
         if (
@@ -160,13 +159,84 @@ def sample_color(path, x, y, radius=4):
             or "transparency" in image.info
             or b"hdrgm:" in image.info.get("xmp", b"")
         ):
-            raise ValueError("请使用普通 SDR JPEG 或不透明 RGB PNG 预览取样")
+            raise ValueError("请使用普通 SDR JPEG 或不透明 RGB PNG 预览")
         if image.format == "PNG":
             with path.open("rb") as header:
                 data = header.read(25)
                 if len(data) != 25 or data[24] != 8:
-                    raise ValueError("取样仅支持 8 位 PNG")
-        view = ImageOps.exif_transpose(image)
+                    raise ValueError("仅支持 8 位 PNG")
+        if image.getexif().get(274, 1) == 1:
+            yield image
+        else:
+            with ImageOps.exif_transpose(image) as view:
+                yield view
+
+
+def srgb_pixels(view):
+    import io
+    from PIL import ImageCms
+
+    profile = view.info.get("icc_profile")
+    if profile:
+        try:
+            return ImageCms.profileToProfile(
+                view,
+                io.BytesIO(profile),
+                ImageCms.createProfile("sRGB"),
+                outputMode="RGB",
+            )
+        except ImageCms.PyCMSError as exc:
+            raise ValueError("预览 ICC 无法转换到 sRGB") from exc
+    return view if view.mode == "RGB" else view.convert("RGB")
+
+
+def exposure_stats(path, region=None):
+    """Measure endpoint pixels in an oriented, 8-bit sRGB rendition."""
+    from math import ceil, floor
+
+    with oriented_sdr(path) as view:
+        width, height = view.size
+        box = (0, 0, width, height)
+        if region is not None:
+            left, top, right, bottom = region
+            if not (0 <= left < right <= 1 and 0 <= top < bottom <= 1):
+                raise ValueError("选区使用 0–1 的左、上、右、下边界，且须有面积")
+            box = (
+                floor(left * width),
+                floor(top * height),
+                ceil(right * width),
+                ceil(bottom * height),
+            )
+        pixels = (box[2] - box[0]) * (box[3] - box[1])
+        patch = view if box == (0, 0, width, height) else view.crop(box)
+        histogram = srgb_pixels(patch).histogram()
+    channels = {}
+    for index, name in enumerate(("red", "green", "blue")):
+        start = 256 * index
+        low, high = histogram[start], histogram[start + 255]
+        channels[name] = {
+            "at_0": low,
+            "at_255": high,
+            "at_0_pct": round(100 * low / pixels, 5),
+            "at_255_pct": round(100 * high / pixels, 5),
+        }
+    return {
+        "space": "sRGB 8-bit",
+        "image_size": [width, height],
+        "pixel_box": list(box),
+        "pixels": pixels,
+        "channels": channels,
+    }
+
+
+def sample_color(path, x, y, radius=4):
+    """Estimate the hue of a displayed patch, using oriented sRGB pixels."""
+    import colorsys
+    from PIL import ImageStat
+
+    if not (0 <= x <= 1 and 0 <= y <= 1 and 0 <= radius <= 64):
+        raise ValueError("取样坐标使用 0–1，半径使用 0–64 像素")
+    with oriented_sdr(path) as view:
         px, py = round(x * (view.width - 1)), round(y * (view.height - 1))
         box = (
             max(0, px - radius),
@@ -174,19 +244,7 @@ def sample_color(path, x, y, radius=4):
             min(view.width, px + radius + 1),
             min(view.height, py + radius + 1),
         )
-        patch = view.crop(box)
-        profile = image.info.get("icc_profile")
-        if profile:
-            try:
-                patch = ImageCms.profileToProfile(
-                    patch,
-                    io.BytesIO(profile),
-                    ImageCms.createProfile("sRGB"),
-                    outputMode="RGB",
-                )
-            except ImageCms.PyCMSError as e:
-                raise ValueError("预览 ICC 无法转换到 sRGB") from e
-        rgb = [v / 255 for v in ImageStat.Stat(patch.convert("RGB")).mean]
+        rgb = [v / 255 for v in ImageStat.Stat(srgb_pixels(view.crop(box))).mean]
     hue, saturation, brightness = colorsys.rgb_to_hsv(*rgb)
     reliable = (max(rgb) - min(rgb)) >= 0.025
     return {
