@@ -110,6 +110,10 @@ MCP 调用 `analyze_exposure` 时传入 `{"file":"成片.jpg","region":[0,0,1,0.
 
 MCP 的 `make_variant` 与 `render_photos` 接受 `radial_masks: [{"name":"人脸","center":[0.48,0.36],"radii":[0.12,0.18],"feather":0.35,"ev":0.5}]`。
 
+## 接续一个批次
+
+给 `render` 或 `export` 加上 `--batch-id portraits-01`，MCP 中对应参数为 `batch_id`。首次运行将配方和每张成片保存到输出目录的 `batch-portraits-01` 下。遇到坏文件时，结果会逐张列出 `completed`、`failed` 和 `pending`。修好失败文件后，重跑同一条命令即可。文件顺序、配方和输出目录须相同；已完成的原片或配方需要重新处理时，请换批次名。CLI 遇到失败返回非零退出码，MCP 返回逐张状态。每张交付文件与回执一起发布，中断后只重做尚未交付的项目。
+
 ## 并排对比成片
 
 `phocus compare 调整前.jpg 调整后.jpg --crop 3500 2100 600 600` 生成左前右后的无损 PNG，两侧显示同一区域的原始像素。省略 `--crop` 则显示整图。支持同一构图、相同显示尺寸的 SDR JPEG/PNG；软件按 EXIF 方向定位并转换到 sRGB。单次 MCP 调用 `preview_result(file=调整前, compare_with=调整后, crop=[3500,2100,600,600])` 即可返回对照图。

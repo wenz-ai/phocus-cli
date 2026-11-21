@@ -84,7 +84,7 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
             schemas = {t.name: t.inputSchema["properties"] for t in tools.tools}
             variant_fields = dict(schemas["make_variant"])
             render_fields = dict(schemas["render_photos"])
-            del variant_fields["photo"], render_fields["photos"], render_fields["delivery"]
+            del variant_fields["photo"], render_fields["photos"], render_fields["delivery"], render_fields["batch_id"]
             self.assertEqual(variant_fields, render_fields)
             self.assertTrue(all(t.title for t in tools.tools))
             r = await client.call_tool("capabilities", {})
@@ -248,6 +248,30 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
                     await client.call_tool("analyze_exposure", {"file": "linked.png"})
                 ).isError
             )
+
+    async def test_export_batch_resumes_after_a_missing_input(self):
+        async with self.connected() as client:
+            files = ["one.jpg", "two.jpg", "three.jpg"]
+            for name in (files[0], files[2]):
+                Image.new("RGB", (40, 20), "blue").save(self.library / name)
+            req = {"files": files, "batch_id": "portraits", "delivery": {"long_edge": 20}}
+
+            async def run():
+                reply = await client.call_tool("export_photos", req)
+                self.assertFalse(reply.isError, reply.content)
+                return reply.structuredContent["result"]
+
+            first = await run()
+            self.assertEqual([r["status"] for r in first], ["completed", "failed", "pending"])
+            old = Path(first[0]["output"])
+            stamp = old.stat().st_mtime_ns
+            Image.new("RGB", (40, 20), "red").save(self.library / files[1])
+            second = await run()
+            self.assertTrue(all(r["status"] == "completed" for r in second))
+            self.assertEqual(first[0], second[0])
+            self.assertEqual(old.stat().st_mtime_ns, stamp)
+            req["delivery"]["long_edge"] = 30
+            self.assertTrue((await client.call_tool("export_photos", req)).isError)
 
     async def test_color_sampling_and_offline_recipe(self):
         async with self.connected() as client:
