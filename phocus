@@ -394,6 +394,9 @@ def hnnr(src, watch, out, mode, timeout):
             raise ValueError("请为 HNNR 使用空的专用队列，避免误选其他照片")
         swift = Path(__file__).resolve().parent / "native/HNNR.swift"
         binary = CACHE / ("hnnr-" + hashlib.sha256(swift.read_bytes()).hexdigest()[:16])
+        bundled = swift.parent / ("hnnr-" + os.uname().machine)
+        if bundled.is_file() and os.access(bundled, os.X_OK):
+            binary = bundled
         if not binary.exists():
             with tempfile.TemporaryDirectory(dir=CACHE) as build:
                 executable = Path(build) / "hnnr"
@@ -447,21 +450,25 @@ def hnnr(src, watch, out, mode, timeout):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    from workspace_paths import read_paths, save_paths
+
+    paths = read_paths()
+    parser.add_argument("--version", action="version", version="Phocus CLI 1.0.0")
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("capabilities", help="列出参数、数值范围和可用路径")
     inspect = sub.add_parser("inspect", help="离线读取当前调整、版本和历史")
     inspect.add_argument("source", type=Path)
     var = sub.add_parser("variant", help="在新目录生成已调色的 RAW + .phos 副本")
     var.add_argument("source", type=Path)
-    var.add_argument("--out", type=Path, required=True)
+    var.add_argument("--out", type=Path, default=paths["out"])
     var.add_argument("--set", nargs="+", default=[], metavar="KEY=VALUE")
     run = sub.add_parser(
         "render", help="后台打开工作副本、调参并用 Phocus 输出；可传多张"
     )
     run.add_argument("sources", type=Path, nargs="+")
-    run.add_argument("--watch", type=Path, required=True)
-    run.add_argument("--spool", type=Path, required=True)
-    run.add_argument("--out", type=Path, required=True)
+    run.add_argument("--watch", type=Path, default=paths["watch"])
+    run.add_argument("--spool", type=Path, default=paths["spool"])
+    run.add_argument("--out", type=Path, default=paths["out"])
     run.add_argument("--set", nargs="+", default=[], metavar="KEY=VALUE")
     run.add_argument("--timeout", type=int, default=90)
     for command in (var, run):
@@ -479,14 +486,14 @@ def main():
     noise = sub.add_parser("hnnr", help="使用官方 HNNR 桌面窗口生成新的降噪 RAW")
     noise.add_argument("source", type=Path)
     noise.add_argument("--mode", choices=("detail", "purity"), required=True)
-    noise.add_argument("--watch", type=Path, required=True)
-    noise.add_argument("--out", type=Path, required=True)
+    noise.add_argument("--watch", type=Path, default=paths["watch"])
+    noise.add_argument("--out", type=Path, default=paths["out"])
     noise.add_argument("--timeout", type=int, default=180)
     mark = sub.add_parser(
         "watermark", help="在导出的 SDR 图片上生成独立文字或 PNG logo 水印版"
     )
     mark.add_argument("source", type=Path)
-    mark.add_argument("--out", type=Path, required=True)
+    mark.add_argument("--out", type=Path, default=paths["out"])
     kind = mark.add_mutually_exclusive_group(required=True)
     kind.add_argument("--text")
     kind.add_argument("--logo", type=Path)
@@ -503,7 +510,7 @@ def main():
         "export", help="将一批已渲染的 SDR JPEG/PNG 另存为指定尺寸、质量及水印的交付版"
     )
     export.add_argument("sources", type=Path, nargs="+")
-    export.add_argument("--out", type=Path, required=True)
+    export.add_argument("--out", type=Path, default=paths["out"])
     for cmd in (run, export):
         cmd.add_argument("--export-format", choices=("jpeg", "png"))
         cmd.add_argument("--long-edge", type=int)
@@ -519,7 +526,34 @@ def main():
         )
         cmd.add_argument("--watermark-width", type=float)
         cmd.add_argument("--watermark-opacity", type=int)
+    config = sub.add_parser("paths", help="查看目录，或设置工作目录")
+    for key in paths:
+        config.add_argument("--" + key, type=Path)
+    mcp = sub.add_parser("mcp", help="启动可选的 stdio MCP 服务")
+    for key in paths:
+        mcp.add_argument("--" + key, type=Path, default=paths[key])
     args = parser.parse_args()
+    if args.cmd == "paths":
+        updates = {
+            k: getattr(args, k).expanduser().resolve()
+            for k in paths
+            if getattr(args, k) is not None
+        }
+        if updates:
+            paths.update(updates)
+            save_paths(paths)
+        return {k: str(v) for k, v in paths.items()}
+    if args.cmd == "mcp":
+        server = Path(__file__).resolve().with_name("mcp_server.py")
+        os.execv(
+            sys.executable,
+            [
+                sys.executable,
+                str(server),
+                *(part for k in paths for part in ("--" + k, str(getattr(args, k)))),
+            ],
+        )
+
     if args.cmd == "watermark":
         from watermark import stamp
 
