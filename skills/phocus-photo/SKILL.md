@@ -22,3 +22,5 @@ description: 使用本机 Phocus CLI 给哈苏 .3FR 调色、裁切、HNNR 降�
 - 仅提亮人脸或压暗主体周边时，可用 `--radial-mask 人脸 CX CY RX RY 0 0.35 inside 0.5`，按未裁切原图宽高设置中心和半径；outside 调整椭圆外侧。先看预览再批量应用。
 
 - 长批次给 render 或 export 指定 `--batch-id`。遇到失败先报告 completed、failed、pending，再用原文件列表、输出目录和配方重跑同一批次。
+
+- 用户要看前后对比时，用 `phocus compare 调整前.jpg 调整后.jpg`；需要看 HNNR 或肤色细节时加 `--crop X Y WIDTH HEIGHT`。MCP 的 `preview_result` 可传 `compare_with`，左为 file，右为 compare_with。

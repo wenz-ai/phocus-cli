@@ -662,7 +662,21 @@ def main():
     analyze.add_argument(
         "--region", nargs=4, type=float, metavar=("LEFT", "TOP", "RIGHT", "BOTTOM")
     )
+    compare = sub.add_parser("compare", help="两张 SDR 成片同倍率对比，左为调整前，右为调整后")
+    compare.add_argument("before", type=Path)
+    compare.add_argument("after", type=Path)
+    compare.add_argument("--crop", type=int, nargs=4, metavar=("X", "Y", "WIDTH", "HEIGHT"))
+    compare.add_argument("--out", type=Path, default=paths["out"])
     args = parser.parse_args()
+    if args.cmd == "compare":
+        from tone_controls import compare_previews
+
+        preview = compare_previews(args.before.resolve(), args.after.resolve(), args.crop)
+        directory = args.out.resolve()
+        directory.mkdir(parents=True, exist_ok=True)
+        dest = directory / f"compare-{uuid.uuid4().hex}.png"
+        preview.save(dest)
+        return {"output": str(dest), "pixels": list(preview.size)}
     if args.cmd == "exposure-stats":
         from tone_controls import exposure_stats
 
