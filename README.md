@@ -47,7 +47,40 @@ cd phocus-cli
 | 常规降噪 | `noise_filter_bias` −10 至 10 对应亮度降噪，`color_noise_radius` 0–50 控制彩色降噪 |
 | 图案校正 | `moire_removal` 0–5 处理全局摩尔纹，`remove_checkerboard` 0/1 控制棋盘格校正 |
 
-**HNNR 的支持情况。** 哈苏的 HNNR 使用本地 AI 模型。Phocus 4.2.3 的 Mac 版说明给出的入口是缩略图右键菜单，可选 Prioritise Purity 或 Prioritise Detail。本工具已接入上表的常规降噪，尚未接入 HNNR。全局摩尔纹及棋盘格校正适用于特定成像问题，适合用原尺寸局部对照判断效果。[哈苏 Phocus](https://www.hasselblad.com/phocus/phocus-for-pc-mac/)
+## 官方 HNNR 桌面桥（实验性）
+
+`hnnr` 调用正在运行的 Phocus，生成新的降噪 .3FR。支持 `purity`（纯净优先）和 `detail`（细节优先）。该命令需要 macOS 图形会话、可见的 Phocus 主窗口及缩略图面板、Xcode 命令行工具，以及运行客户端的辅助功能权限。首次使用会在本地编译 Swift helper。
+
+在 Phocus 中选中 **空的专用队列**，关闭「自动输出新的图像」，然后运行：
+
+```sh
+./phocus hnnr /photos/sample.3FR --mode detail --watch /photos/inbox --out /photos/results
+```
+
+命令把 RAW 副本放入队列，向 Phocus 的缩略图定向右键，检查官方模式窗口只有一张可处理照片，选择模式并提交。原生模式窗及进度窗仍会出现；两次被监测的测试中前台应用都保持可用。macOS 的窗口坐标接口未公开，不同系统版本可能影响兼容性。目前识别简体中文及英文控件，实测使用简体中文。运行期间请让 Phocus 停留在队列目录。若超时，会报告工作副本位置。
+
+返回的 `output` 是新 RAW，能继续交给 `render_photos`。需要导出 JPEG 时，先重新开启 Phocus 的自动输出。HNNR 处理传感器数据，命令从原始 RAW 建立工作副本，后续调色请应用到降噪后的文件。
+
+## 构图与水印
+
+`variant` 和 `render` 都支持 `--crop LEFT TOP RIGHT BOTTOM`。边界是 0 到 1 的归一化坐标，表示原图中的矩形。`--rotate` 接受逆时针 0、90、180、270 度。`monochrome=1` 开启 Phocus 黑白工具，0 关闭。裁切、旋转和黑白都由 Phocus 自己渲染。
+
+```sh
+./phocus variant /photos/sample.3FR --out /photos/variants \
+  --crop 0.25 0.25 0.75 0.75 --rotate 90 --set monochrome=1
+```
+
+水印是独立的导出后步骤，支持文字或透明 PNG logo。安装 Pillow 后，用同一 Python 解释器运行 CLI。可选四角位置、占图宽度百分比、透明度、JPEG 或 PNG 输出。
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install 'Pillow>=11,<14'
+.venv/bin/python phocus watermark /photos/finished.jpg --text 'Studio / 2026' --out /photos/results
+.venv/bin/python phocus watermark /photos/finished.jpg --logo /photos/logo.png \
+  --corner bottom-left --width-pct 12 --opacity 70 --format png --out /photos/results
+```
+
+水印处理普通 SDR JPEG 和 8 位 PNG，显示方向按 EXIF 校正，保留源 ICC 色彩配置，另存带标记的副本并省略拍摄元数据。JPEG 会重新压缩，需要保留水印区外的原像素时选择 PNG。哈苏官方相框、HDR 增益图水印、16 位 TIFF 水印仍待验证。
 
 ## 接入 MCP
 
@@ -55,7 +88,7 @@ cd phocus-cli
 
 ```sh
 python3 -m venv .venv
-.venv/bin/python -m pip install 'mcp==1.30.0'
+.venv/bin/python -m pip install 'mcp==1.30.0' 'Pillow>=11,<14'
 ```
 
 以下为支持 `mcpServers` 配置格式的客户端示例。终端工作目录可能与图形应用不同，请填写绝对路径。library 是可读取的 RAW 根目录，out 是派生图片的根目录。
@@ -83,6 +116,8 @@ python3 -m venv .venv
 | `inspect_photo` | 读取已保存的调整及历史版本名称 |
 | `make_variant` | 创建新的可编辑 RAW 副本 |
 | `render_photos` | 一次提交多张照片与一组参数，返回文件路径、尺寸及耗时 |
+| `denoise_raw` | 在专用队列中提交 Phocus HNNR，返回可再次传入渲染工具的 RAW 路径 |
+| `watermark_result` | 给成片添加文字或 library 目录中的 PNG logo，返回新文件路径 |
 | `preview_result` | 默认返回长边 1280 像素的总览。传入 `crop: [x, y, width, height]` 取左上角起算的原尺寸局部，每边最多 1280 像素 |
 
 例如，比较同张照片两种降噪设置时，可以让助手“各导出一版，取两张成片相同位置的 512 × 512 暗部，再看整张”。只有调用预览工具时，图片才会进入所连接的 MCP 客户端。

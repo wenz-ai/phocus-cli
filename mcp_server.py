@@ -3,6 +3,7 @@
 import argparse
 import json
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -22,25 +23,38 @@ server = FastMCP("Phocus Local")
 
 def source_path(name: str) -> Path:
     path = (library / name).resolve(strict=True)
-    if not path.is_relative_to(library) or path.suffix.lower() != ".3fr":
+    allowed = next(
+        (base for base in (library, output) if path.is_relative_to(base)), None
+    )
+    if allowed is None or path.suffix.lower() != ".3fr":
         raise ValueError("请指定 library 内的 .3FR")
     sidecar = Path(str(path) + ".phos")
-    if sidecar.is_symlink() and not sidecar.resolve().is_relative_to(library):
+    if sidecar.is_symlink() and not sidecar.resolve().is_relative_to(allowed):
         raise ValueError("sidecar 超出 library 范围")
     return path
 
 
 def call(*args):
     proc = subprocess.run(
-        [str(cli), *map(str, args)], text=True, check=False, capture_output=True
+        [sys.executable, str(cli), *map(str, args)],
+        text=True,
+        check=False,
+        capture_output=True,
     )
     if proc.returncode:
         raise ValueError(proc.stderr.strip() or proc.stdout.strip())
     return json.loads(proc.stdout)
 
 
-def settings(changes):
-    return ["--set", *(f"{k}={v}" for k, v in changes.items())] if changes else []
+def settings(changes, crop=None, rotate=None):
+    args = ["--set", *(f"{k}={v}" for k, v in changes.items())] if changes else []
+    if crop is not None:
+        if len(crop) != 4:
+            raise ValueError("crop 需要四个边界")
+        args.extend(["--crop", *crop])
+    if rotate is not None:
+        args.extend(["--rotate", rotate])
+    return args
 
 
 @server.tool()
@@ -56,14 +70,26 @@ def inspect_photo(photo: str) -> dict:
 
 
 @server.tool()
-def make_variant(photo: str, changes: dict[str, float]) -> dict:
-    """Write a new editable RAW + sidecar in the output root, offline."""
-    return call("variant", source_path(photo), "--out", output, *settings(changes))
+def make_variant(
+    photo: str,
+    changes: dict[str, float],
+    crop: list[float] | None = None,
+    rotate: int | None = None,
+) -> dict:
+    """Create an editable RAW copy offline. Crop is normalized [left, top, right, bottom]; rotate is degrees CCW."""
+    return call(
+        "variant", source_path(photo), "--out", output, *settings(changes, crop, rotate)
+    )
 
 
 @server.tool()
-def render_photos(photos: list[str], changes: dict[str, float]) -> list[dict]:
-    """Apply a recipe and render in background Phocus. Return file paths and values only."""
+def render_photos(
+    photos: list[str],
+    changes: dict[str, float],
+    crop: list[float] | None = None,
+    rotate: int | None = None,
+) -> list[dict]:
+    """Render a batch with Phocus. Crop is normalized [left, top, right, bottom]; rotate is degrees CCW."""
     if not photos:
         raise ValueError("photos 至少需要一张照片")
     return call(
@@ -75,7 +101,55 @@ def render_photos(photos: list[str], changes: dict[str, float]) -> list[dict]:
         spool,
         "--out",
         output,
-        *settings(changes),
+        *settings(changes, crop, rotate),
+    )
+
+
+@server.tool()
+def denoise_raw(photo: str, mode: str) -> dict:
+    """Submit the native HNNR mode (purity/detail). Uses Phocus desktop UI; requires its viewed queue empty and auto-export off."""
+    return call(
+        "hnnr", source_path(photo), "--mode", mode, "--watch", watch, "--out", output
+    )
+
+
+@server.tool()
+def watermark_result(
+    file: str,
+    text: str | None = None,
+    logo: str | None = None,
+    corner: str = "bottom-right",
+    width_pct: float = 18,
+    opacity: int = 65,
+    format: str = "jpeg",
+) -> dict:
+    """Create a marked copy of an SDR output. Supply either text or a PNG logo from the library."""
+    path = (output / file).resolve(strict=True)
+    if not path.is_relative_to(output):
+        raise ValueError("请选择输出目录中的成片")
+    if (text is None) == (logo is None):
+        raise ValueError("文字和 logo 只能选一种")
+    if logo is not None:
+        asset = (library / logo).resolve(strict=True)
+        if not asset.is_relative_to(library) or asset.suffix.lower() != ".png":
+            raise ValueError("请选择 library 内的 PNG")
+        mark = ["--logo", asset]
+    else:
+        mark = ["--text", text]
+    return call(
+        "watermark",
+        path,
+        "--out",
+        output,
+        *mark,
+        "--corner",
+        corner,
+        "--width-pct",
+        width_pct,
+        "--opacity",
+        opacity,
+        "--format",
+        format,
     )
 
 

@@ -51,6 +51,7 @@ def main():
         "color_noise_radius": 40,
         "moire_removal": 5,
         "remove_checkerboard": 1,
+        "monochrome": 1,
     }
     available = json.loads(subprocess.check_output([str(CLI), "capabilities"]))
     if recipes.keys() != available.keys():

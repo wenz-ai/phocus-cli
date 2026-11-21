@@ -68,6 +68,8 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
                 {t.name for t in tools.tools},
                 {
                     "capabilities",
+                    "denoise_raw",
+                    "watermark_result",
                     "inspect_photo",
                     "make_variant",
                     "render_photos",
@@ -105,6 +107,42 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(
                 (await client.call_tool("inspect_photo", {"photo": "link.3FR"})).isError
             )
+
+    async def test_watermark_uses_output_root_and_preserves_unmarked_pixels(self):
+        async with self.connected() as client:
+            image = Image.new("RGB", (200, 100), (35, 45, 55))
+            image.save(self.out / "photo.png")
+            logo = Image.new("RGBA", (16, 8), (255, 0, 0, 255))
+            logo.putpixel((0, 0), (0, 0, 0, 0))
+            logo.save(self.library / "logo.png")
+            req = {
+                "file": "photo.png",
+                "logo": "logo.png",
+                "width_pct": 8,
+                "opacity": 100,
+                "format": "png",
+            }
+            result = await client.call_tool("watermark_result", req)
+            self.assertFalse(result.isError, result.content)
+            payload = json.loads(result.content[0].text)
+            x, y, w, h = payload["mark_box"]
+            from PIL import ImageChops
+
+            with Image.open(payload["output"]) as marked:
+                self.assertEqual(marked.size, image.size)
+                self.assertEqual(marked.getpixel((x, y)), image.getpixel((x, y)))
+                self.assertEqual(marked.getpixel((x + 3, y + 2)), (255, 0, 0))
+                self.assertEqual(
+                    ImageChops.difference(marked, image).getbbox(), (x, y, x + w, y + h)
+                )
+            bad = await client.call_tool(
+                "watermark_result", {**req, "file": str(self.library / "logo.png")}
+            )
+            self.assertTrue(bad.isError)
+            bad = await client.call_tool(
+                "denoise_raw", {"photo": "test.3FR", "mode": "unknown"}
+            )
+            self.assertTrue(bad.isError)
 
     async def test_overview_and_detail_preview(self):
         async with self.connected() as client:

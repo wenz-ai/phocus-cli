@@ -4,6 +4,7 @@
 import argparse
 import contextlib
 import fcntl
+import hashlib
 import xml.parsers.expat
 import json
 import math
@@ -36,6 +37,7 @@ FIELDS = {
     "noise_filter_bias": ("NoiseFilterBias", -10, 10, "ApplyNoiseFilterBias"),
     "color_noise_radius": ("ColorNoiseRadius", 0, 50, "ApplyCNFilter"),
     "moire_removal": ("MoireRemoval", 0, 5, "ApplyCNFilter"),
+    "monochrome": ("ApplyGrayScale", 0, 1, None),
     "remove_checkerboard": ("GreenGreen", 0, 1, "ApplyCNFilter"),
 }
 CACHE = Path.home() / "Library/Caches/phocus-cli"
@@ -116,12 +118,21 @@ def apply_offline(path, changes):
     if data["Version"] != 31 or settings.get("streamableVersion") != 11:
         raise ValueError("未验证的 .phos 格式版本")
     for key, value in changes.items():
+        if key == "crop" or key == "rotation":
+            geometry = data["ImageSettings"][data["CurrentIx"]]["ImageDescription"]
+            if key == "crop":
+                geometry["RelativeCrop"].update(
+                    dict(zip(("Left", "Top", "Right", "Bottom"), value))
+                )
+            else:
+                geometry["Rotation"] = float(value)
+            continue
         field, _, _, switch = FIELDS[key]
         if field not in settings or (switch and switch not in settings):
             raise ValueError("该 .phos 缺少字段: " + field)
         if key == "exposure":
             settings[field] = 2.0**value
-        elif key == "remove_checkerboard":
+        elif key in {"remove_checkerboard", "monochrome"}:
             settings[field] = bool(value)
         else:
             settings[field] = value
@@ -289,6 +300,103 @@ def render(src, watch, spool, out, changes, timeout):
             remove_own_files(cleanup)
 
 
+def adjustment_args(args):
+    changes = edits(args.set, FIELDS)
+    if args.crop is not None:
+        left, top, right, bottom = args.crop
+        if not (0 <= left < right <= 1 and 0 <= top < bottom <= 1):
+            raise ValueError("裁切范围应满足 0 ≤ 左 < 右 ≤ 1，0 ≤ 上 < 下 ≤ 1")
+        changes["crop"] = args.crop
+    if args.rotate is not None:
+        changes["rotation"] = args.rotate
+    return changes
+
+
+def completed_raw(path, last):
+    if not path.is_file():
+        return False, None
+    stat = path.stat()
+    stamp = stat.st_size, stat.st_mtime_ns
+    if last != stamp or stamp[0] < 8:
+        return False, stamp
+    with path.open("rb") as stream:
+        if stream.read(4) not in (b"II*\0", b"MM\0*"):
+            return False, stamp
+    opened = subprocess.run(
+        ["/usr/sbin/lsof", "-Fa", str(path)],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    writing = {"aw", "au"}.intersection(opened.stdout.splitlines())
+    return opened.returncode in (
+        0,
+        1,
+    ) and not opened.stderr.strip() and not writing, stamp
+
+
+def hnnr(src, watch, out, mode, timeout):
+    check_raw(src)
+    if timeout <= 0 or not watch.is_dir() or out == watch or watch in out.parents:
+        raise ValueError("需要专用队列、独立输出目录和正数超时")
+    if src.stem.lower().endswith(("_denoised_p", "_denoised_d")):
+        raise ValueError("输入已经具有 Phocus 降噪成片后缀")
+    with lock("render.lock"):
+        if any(not item.name.startswith(".") for item in watch.iterdir()):
+            raise ValueError("请为 HNNR 使用空的专用队列，避免误选其他照片")
+        swift = Path(__file__).resolve().parent / "native/HNNR.swift"
+        binary = CACHE / ("hnnr-" + hashlib.sha256(swift.read_bytes()).hexdigest()[:16])
+        if not binary.exists():
+            with tempfile.TemporaryDirectory(dir=CACHE) as build:
+                executable = Path(build) / "hnnr"
+                checked(["/usr/bin/xcrun", "swiftc", "-O", swift, "-o", executable])
+                os.replace(executable, binary)
+        checked([binary, "check", watch.name])
+        out.mkdir(parents=True, exist_ok=True)
+        work = watch / ("phhnnr" + uuid.uuid4().hex + ".3FR")
+        suffix = "_denoised_" + ("p" if mode == "purity" else "d") + ".3FR"
+        result = work.with_name(work.stem + suffix)
+        with tempfile.TemporaryDirectory(prefix=".stage-", dir=watch) as temp:
+            staged = Path(temp) / work.name
+            copy_raw(src, staged)
+            os.rename(staged, work)
+        start = time.monotonic()
+        try:
+            checked([binary, "submit", watch.name, work.name, mode])
+            deadline = time.monotonic() + timeout
+            last = None
+            while time.monotonic() < deadline:
+                ready, last = completed_raw(result, last)
+                if ready:
+                    state = subprocess.run(
+                        [str(binary), "check", watch.name],
+                        capture_output=True,
+                        check=False,
+                    )
+                    if state.returncode == 0:
+                        break
+                time.sleep(0.6)
+            else:
+                raise ValueError("等待 Phocus 完成 HNNR 超时")
+            with tempfile.TemporaryDirectory(dir=out, prefix=".publish-") as tmp:
+                ready = Path(tmp) / "result"
+                ready.mkdir()
+                finalname = src.stem + suffix
+                copy_raw(result, ready / finalname)
+                dest = out / ("hnnr-" + uuid.uuid4().hex[:12])
+                os.rename(ready, dest)
+            remove_own_files([work, sidecar(work), result, sidecar(result)])
+            return {
+                "output": str(dest / finalname),
+                "mode": mode,
+                "engine": "Phocus HNNR",
+                "desktop_ui": True,
+                "elapsed_seconds": round(time.monotonic() - start, 3),
+            }
+        except Exception as exc:
+            raise ValueError(f"{exc}。工作副本保留在 {work}") from exc
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -298,7 +406,7 @@ def main():
     var = sub.add_parser("variant", help="在新目录生成已调色的 RAW + .phos 副本")
     var.add_argument("source", type=Path)
     var.add_argument("--out", type=Path, required=True)
-    var.add_argument("--set", nargs="+", required=True, metavar="KEY=VALUE")
+    var.add_argument("--set", nargs="+", default=[], metavar="KEY=VALUE")
     run = sub.add_parser(
         "render", help="后台打开工作副本、调参并用 Phocus 输出；可传多张"
     )
@@ -308,7 +416,55 @@ def main():
     run.add_argument("--out", type=Path, required=True)
     run.add_argument("--set", nargs="+", default=[], metavar="KEY=VALUE")
     run.add_argument("--timeout", type=int, default=90)
+    for command in (var, run):
+        command.add_argument(
+            "--crop", type=float, nargs=4, metavar=("LEFT", "TOP", "RIGHT", "BOTTOM")
+        )
+        command.add_argument("--rotate", type=int, choices=(0, 90, 180, 270))
+    noise = sub.add_parser("hnnr", help="使用官方 HNNR 桌面窗口生成新的降噪 RAW")
+    noise.add_argument("source", type=Path)
+    noise.add_argument("--mode", choices=("detail", "purity"), required=True)
+    noise.add_argument("--watch", type=Path, required=True)
+    noise.add_argument("--out", type=Path, required=True)
+    noise.add_argument("--timeout", type=int, default=180)
+    mark = sub.add_parser(
+        "watermark", help="在导出的 SDR 图片上生成独立文字或 PNG logo 水印版"
+    )
+    mark.add_argument("source", type=Path)
+    mark.add_argument("--out", type=Path, required=True)
+    kind = mark.add_mutually_exclusive_group(required=True)
+    kind.add_argument("--text")
+    kind.add_argument("--logo", type=Path)
+    mark.add_argument(
+        "--corner",
+        choices=("top-left", "top-right", "bottom-left", "bottom-right"),
+        default="bottom-right",
+    )
+    mark.add_argument("--width-pct", type=float, default=18)
+    mark.add_argument("--opacity", type=int, default=65)
+    mark.add_argument("--format", choices=("jpeg", "png"), default="jpeg")
     args = parser.parse_args()
+    if args.cmd == "watermark":
+        from watermark import stamp
+
+        return stamp(
+            args.source.resolve(),
+            args.out.resolve(),
+            text=args.text,
+            logo=args.logo,
+            corner=args.corner,
+            width_pct=args.width_pct,
+            opacity=args.opacity,
+            fmt=args.format,
+        )
+    if args.cmd == "hnnr":
+        return hnnr(
+            args.source.resolve(),
+            args.watch.resolve(),
+            args.out.resolve(),
+            args.mode,
+            args.timeout,
+        )
     if args.cmd == "capabilities":
         return {
             k: {"range": [lo, hi], "storage_key": field}
@@ -320,17 +476,23 @@ def main():
             "version": data["Version"],
             "current": data["CurrentIx"],
             "history": [row.get("Name") for row in data["ImageSettings"]],
+            "geometry": data["ImageSettings"][data["CurrentIx"]]
+            .get("ImageDescription", {})
+            .get("RelativeCrop"),
+            "rotation": data["ImageSettings"][data["CurrentIx"]]
+            .get("ImageDescription", {})
+            .get("Rotation"),
             "values": {
                 k: (round(math.log2(values[f]), 3) if k == "exposure" else values[f])
                 for k, (f, *_) in FIELDS.items()
                 if f in values
             },
         }
+    changes = adjustment_args(args)
     if args.cmd == "variant":
-        return variant(
-            args.source.resolve(), args.out.resolve(), edits(args.set, FIELDS)
-        )
-    changes = edits(args.set, FIELDS)
+        if not changes:
+            raise ValueError("请提供 --set、--crop 或 --rotate")
+        return variant(args.source.resolve(), args.out.resolve(), changes)
     if args.timeout < 1:
         raise ValueError("--timeout 必须大于 0")
     output = []

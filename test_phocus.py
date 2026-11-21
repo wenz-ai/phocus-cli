@@ -80,6 +80,57 @@ class SidecarTests(unittest.TestCase):
                 with self.subTest(name=name, value=val), self.assertRaises(ValueError):
                     api["edits"]([f"{name}={val}"], api["FIELDS"])
 
+    def test_geometry_on_copy_preserves_existing_description_fields(self):
+        data = plistlib.loads(self.content)
+        desc = {
+            "Rotation": 0.0,
+            "RelativeCrop": {
+                "Left": 0.0,
+                "Top": 0.0,
+                "Right": 1.0,
+                "Bottom": 1.0,
+                "streamableVersion": 1,
+            },
+            "Zoom": 100.0,
+        }
+        data["ImageSettings"][1]["ImageDescription"] = desc
+        self.file.write_bytes(plistlib.dumps(data))
+        result = api["variant"](
+            self.raw, self.root, {"crop": [0.1, 0.2, 0.7, 0.8], "rotation": 90}
+        )
+        saved = plistlib.loads(Path(result["sidecar"]).read_bytes())["ImageSettings"][
+            1
+        ]["ImageDescription"]
+        self.assertEqual(saved["Zoom"], 100)
+        self.assertEqual(saved["Rotation"], 90)
+        self.assertEqual(saved["RelativeCrop"]["Right"], 0.7)
+        self.assertEqual(saved["RelativeCrop"]["streamableVersion"], 1)
+        self.assertEqual(
+            plistlib.loads(self.file.read_bytes())["ImageSettings"][1][
+                "ImageDescription"
+            ],
+            desc,
+        )
+
+    def test_invalid_crop_fails_before_writing(self):
+        import argparse
+
+        for crop in [
+            [0, 0, 0, 1],
+            [0, 0.8, 0.8, 0.3],
+            [-1, 0, 1, 1],
+            [0, 0, float("nan"), 1],
+        ]:
+            with self.assertRaises(ValueError):
+                api["adjustment_args"](
+                    argparse.Namespace(set=[], crop=crop, rotate=None)
+                )
+
+    def test_hnnr_rejects_nonempty_queue_before_accessing_ui(self):
+        self.assertTrue(self.raw.exists())
+        with self.assertRaisesRegex(ValueError, "空的专用队列"):
+            api["hnnr"](self.raw, self.root, self.root.parent, "purity", 30)
+
     def test_checkerboard_is_a_plist_boolean(self):
         data = plistlib.loads(self.content)
         data["ImageSettings"][1]["ImageCorrection"].update(
