@@ -11,5 +11,12 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install -r tests/requirements.txt
+      - run: xcrun swiftc -typecheck native/HNNR.swift
       - run: python -m unittest -v test_phocus
       - run: python tests/test_mcp.py -v
+      - name: Test the Mac installer
+        run: |
+          /bin/bash "./安装 Phocus.command"
+          "$HOME/.local/bin/phocus" --version
+          "$HOME/.local/bin/phocus" capabilities
+          test -s "$HOME/.codex/skills/phocus-photo/SKILL.md"

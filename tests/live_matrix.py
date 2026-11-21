@@ -39,6 +39,7 @@ def main():
         "highlights": 40,
         "shadows": 30,
         "temperature": 6500,
+        "tint_native": 0.015,
         "saturation": -30,
         "vibrance": 30,
         "clarity": 40,
@@ -51,6 +52,7 @@ def main():
         "color_noise_radius": 40,
         "moire_removal": 5,
         "remove_checkerboard": 1,
+        "monochrome": 1,
     }
     available = json.loads(subprocess.check_output([str(CLI), "capabilities"]))
     if recipes.keys() != available.keys():

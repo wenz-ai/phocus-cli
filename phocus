@@ -4,6 +4,7 @@
 import argparse
 import contextlib
 import fcntl
+import hashlib
 import xml.parsers.expat
 import json
 import math
@@ -26,6 +27,7 @@ FIELDS = {
     "shadows": ("ShadowFill", -100, 100, "ApplySliders"),
     "clarity": ("Clarity", -100, 100, "ApplySliders"),
     "detail": ("ClarityDetail", -10, 10, "ApplySliders"),
+    "tint_native": ("Tint", -0.015, 0.015, None),
     "temperature": ("ColorTemperature", 2500, 10000, None),
     "saturation": ("Saturation", -50, 50, "ApplySliders"),
     "vibrance": ("Vibrancy", -50, 50, "ApplySliders"),
@@ -36,6 +38,7 @@ FIELDS = {
     "noise_filter_bias": ("NoiseFilterBias", -10, 10, "ApplyNoiseFilterBias"),
     "color_noise_radius": ("ColorNoiseRadius", 0, 50, "ApplyCNFilter"),
     "moire_removal": ("MoireRemoval", 0, 5, "ApplyCNFilter"),
+    "monochrome": ("ApplyGrayScale", 0, 1, None),
     "remove_checkerboard": ("GreenGreen", 0, 1, "ApplyCNFilter"),
 }
 CACHE = Path.home() / "Library/Caches/phocus-cli"
@@ -69,12 +72,12 @@ def edits(items, allowed):
         if (
             not math.isfinite(value)
             or not lo <= value <= hi
-            or (key != "exposure" and not value.is_integer())
+            or (key not in {"exposure", "tint_native"} and not value.is_integer())
         ):
             raise ValueError(f"{key} 超出范围或精度不正确 ({lo}..{hi})")
         if key == "exposure" and abs(value - round(value, 2)) > 1e-8:
             raise ValueError("exposure 最多保留两位小数")
-        result[key] = value if key == "exposure" else int(value)
+        result[key] = value if key in {"exposure", "tint_native"} else int(value)
     return result
 
 
@@ -116,12 +119,27 @@ def apply_offline(path, changes):
     if data["Version"] != 31 or settings.get("streamableVersion") != 11:
         raise ValueError("未验证的 .phos 格式版本")
     for key, value in changes.items():
+        if key == "curves":
+            for channel, points in value.items():
+                curve = settings["Gradations"][CURVES.index(channel)]
+                curve["Points"] = [{"X": x, "Y": y, "DY": 1} for x, y in points]
+            settings["ApplyCurves"] = True
+            continue
+        if key == "crop" or key == "rotation":
+            geometry = data["ImageSettings"][data["CurrentIx"]]["ImageDescription"]
+            if key == "crop":
+                geometry["RelativeCrop"].update(
+                    dict(zip(("Left", "Top", "Right", "Bottom"), value))
+                )
+            else:
+                geometry["Rotation"] = float(value)
+            continue
         field, _, _, switch = FIELDS[key]
         if field not in settings or (switch and switch not in settings):
             raise ValueError("该 .phos 缺少字段: " + field)
         if key == "exposure":
             settings[field] = 2.0**value
-        elif key == "remove_checkerboard":
+        elif key in {"remove_checkerboard", "monochrome"}:
             settings[field] = bool(value)
         else:
             settings[field] = value
@@ -248,7 +266,7 @@ def hot_pass(src, watch, spool, changes, timeout):
         raise ValueError(f"{err}。任务副本保留在 {raw}") from err
 
 
-def render(src, watch, spool, out, changes, timeout):
+def render(src, watch, spool, out, changes, timeout, delivery=None):
     check_raw(src)
     if not watch.is_dir() or not spool.is_dir():
         raise ValueError("--watch 和 --spool 必须是已配置的目录")
@@ -274,8 +292,21 @@ def render(src, watch, spool, out, changes, timeout):
                 filename = src.stem + exported.suffix.lower()
                 shutil.copyfile(exported, staged / filename)
                 shutil.copyfile(sidecar(raw), staged / sidecar(src).name)
+                derivative = {}
+                if delivery is not None:
+                    from watermark import export_image
+
+                    try:
+                        info = export_image(staged / filename, staged, **delivery)
+                    except (ValueError, OSError) as exc:
+                        raise ValueError(
+                            f"交付副本失败: {exc}。已渲染母版保留在 {exported}"
+                        ) from exc
+                    derivative["delivery"] = info
                 result = out / (src.stem + "-" + uuid.uuid4().hex[:12])
                 os.rename(staged, result)
+                if derivative:
+                    info["output"] = str(result / Path(info["output"]).name)
             cleanup.extend((raw, sidecar(raw), exported))
             return {
                 "source": str(src),
@@ -283,32 +314,268 @@ def render(src, watch, spool, out, changes, timeout):
                 "sidecar": str(result / sidecar(src).name),
                 "pixels": size,
                 "passes": passes,
+                **derivative,
                 "elapsed_seconds": round(time.monotonic() - start, 3),
             }
         finally:
             remove_own_files(cleanup)
 
 
+CURVES = ("rgb", "red", "green", "blue")
+
+
+def curve_args(specs):
+    curves = {}
+    for spec in specs or []:
+        channel, *items = spec
+        if channel not in CURVES or channel in curves:
+            raise ValueError("曲线名称必须为 rgb/red/green/blue 且每通道只能指定一次")
+        points = []
+        for item in items:
+            xy = item.split(":")
+            if len(xy) != 2 or any(not n.isascii() or not n.isdecimal() for n in xy):
+                raise ValueError("曲线点格式为 X:Y，两轴都是 0–255 的整数")
+            x, y = map(int, xy)
+            if max(x, y) > 255 or (points and x <= points[-1][0]):
+                raise ValueError("曲线坐标必须在 0–255 之间，X 必须严格递增")
+            points.append([x, y])
+        if len(points) < 2 or points[0][0] != 0 or points[-1][0] != 255:
+            raise ValueError("曲线必须包含 X=0 和 X=255 两个端点")
+        curves[channel] = points
+    return curves
+
+
+def adjustment_args(args):
+    changes = edits(args.set, FIELDS)
+    curves = curve_args(getattr(args, "curve", None))
+    if curves:
+        changes["curves"] = curves
+    if args.crop is not None:
+        left, top, right, bottom = args.crop
+        if not (0 <= left < right <= 1 and 0 <= top < bottom <= 1):
+            raise ValueError("裁切范围应满足 0 ≤ 左 < 右 ≤ 1，0 ≤ 上 < 下 ≤ 1")
+        changes["crop"] = args.crop
+    if args.rotate is not None:
+        changes["rotation"] = args.rotate
+    return changes
+
+
+def completed_raw(path, last):
+    if not path.is_file():
+        return False, None
+    stat = path.stat()
+    stamp = stat.st_size, stat.st_mtime_ns
+    if last != stamp or stamp[0] < 8:
+        return False, stamp
+    with path.open("rb") as stream:
+        if stream.read(4) not in (b"II*\0", b"MM\0*"):
+            return False, stamp
+    opened = subprocess.run(
+        ["/usr/sbin/lsof", "-Fa", str(path)],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    writing = {"aw", "au"}.intersection(opened.stdout.splitlines())
+    return opened.returncode in (
+        0,
+        1,
+    ) and not opened.stderr.strip() and not writing, stamp
+
+
+def hnnr(src, watch, out, mode, timeout):
+    check_raw(src)
+    if timeout <= 0 or not watch.is_dir() or out == watch or watch in out.parents:
+        raise ValueError("需要专用队列、独立输出目录和正数超时")
+    if src.stem.lower().endswith(("_denoised_p", "_denoised_d")):
+        raise ValueError("输入已经具有 Phocus 降噪成片后缀")
+    with lock("render.lock"):
+        if any(not item.name.startswith(".") for item in watch.iterdir()):
+            raise ValueError("请为 HNNR 使用空的专用队列，避免误选其他照片")
+        swift = Path(__file__).resolve().parent / "native/HNNR.swift"
+        binary = CACHE / ("hnnr-" + hashlib.sha256(swift.read_bytes()).hexdigest()[:16])
+        bundled = swift.parent / ("hnnr-" + os.uname().machine)
+        if bundled.is_file() and os.access(bundled, os.X_OK):
+            binary = bundled
+        if not binary.exists():
+            with tempfile.TemporaryDirectory(dir=CACHE) as build:
+                executable = Path(build) / "hnnr"
+                checked(["/usr/bin/xcrun", "swiftc", "-O", swift, "-o", executable])
+                os.replace(executable, binary)
+        checked([binary, "check", watch.name])
+        out.mkdir(parents=True, exist_ok=True)
+        work = watch / ("phhnnr" + uuid.uuid4().hex + ".3FR")
+        suffix = "_denoised_" + ("p" if mode == "purity" else "d") + ".3FR"
+        result = work.with_name(work.stem + suffix)
+        with tempfile.TemporaryDirectory(prefix=".stage-", dir=watch) as temp:
+            staged = Path(temp) / work.name
+            copy_raw(src, staged)
+            os.rename(staged, work)
+        start = time.monotonic()
+        try:
+            checked([binary, "submit", watch.name, work.name, mode])
+            deadline = time.monotonic() + timeout
+            last = None
+            while time.monotonic() < deadline:
+                ready, last = completed_raw(result, last)
+                if ready:
+                    state = subprocess.run(
+                        [str(binary), "check", watch.name],
+                        capture_output=True,
+                        check=False,
+                    )
+                    if state.returncode == 0:
+                        break
+                time.sleep(0.6)
+            else:
+                raise ValueError("等待 Phocus 完成 HNNR 超时")
+            with tempfile.TemporaryDirectory(dir=out, prefix=".publish-") as tmp:
+                ready = Path(tmp) / "result"
+                ready.mkdir()
+                finalname = src.stem + suffix
+                copy_raw(result, ready / finalname)
+                dest = out / ("hnnr-" + uuid.uuid4().hex[:12])
+                os.rename(ready, dest)
+            remove_own_files([work, sidecar(work), result, sidecar(result)])
+            return {
+                "output": str(dest / finalname),
+                "mode": mode,
+                "engine": "Phocus HNNR",
+                "desktop_ui": True,
+                "elapsed_seconds": round(time.monotonic() - start, 3),
+            }
+        except Exception as exc:
+            raise ValueError(f"{exc}。工作副本保留在 {work}") from exc
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    from workspace_paths import read_paths, save_paths
+
+    paths = read_paths()
+    parser.add_argument("--version", action="version", version="Phocus CLI 1.0.0")
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("capabilities", help="列出参数、数值范围和可用路径")
     inspect = sub.add_parser("inspect", help="离线读取当前调整、版本和历史")
     inspect.add_argument("source", type=Path)
     var = sub.add_parser("variant", help="在新目录生成已调色的 RAW + .phos 副本")
     var.add_argument("source", type=Path)
-    var.add_argument("--out", type=Path, required=True)
-    var.add_argument("--set", nargs="+", required=True, metavar="KEY=VALUE")
+    var.add_argument("--out", type=Path, default=paths["out"])
+    var.add_argument("--set", nargs="+", default=[], metavar="KEY=VALUE")
     run = sub.add_parser(
         "render", help="后台打开工作副本、调参并用 Phocus 输出；可传多张"
     )
     run.add_argument("sources", type=Path, nargs="+")
-    run.add_argument("--watch", type=Path, required=True)
-    run.add_argument("--spool", type=Path, required=True)
-    run.add_argument("--out", type=Path, required=True)
+    run.add_argument("--watch", type=Path, default=paths["watch"])
+    run.add_argument("--spool", type=Path, default=paths["spool"])
+    run.add_argument("--out", type=Path, default=paths["out"])
     run.add_argument("--set", nargs="+", default=[], metavar="KEY=VALUE")
     run.add_argument("--timeout", type=int, default=90)
+    for command in (var, run):
+        command.add_argument(
+            "--crop", type=float, nargs=4, metavar=("LEFT", "TOP", "RIGHT", "BOTTOM")
+        )
+        command.add_argument(
+            "--curve",
+            action="append",
+            nargs="+",
+            metavar="CHANNEL_OR_X:Y",
+            help="例如 --curve rgb 0:0 128:160 255:255",
+        )
+        command.add_argument("--rotate", type=int, choices=(0, 90, 180, 270))
+    noise = sub.add_parser("hnnr", help="使用官方 HNNR 桌面窗口生成新的降噪 RAW")
+    noise.add_argument("source", type=Path)
+    noise.add_argument("--mode", choices=("detail", "purity"), required=True)
+    noise.add_argument("--watch", type=Path, default=paths["watch"])
+    noise.add_argument("--out", type=Path, default=paths["out"])
+    noise.add_argument("--timeout", type=int, default=180)
+    mark = sub.add_parser(
+        "watermark", help="在导出的 SDR 图片上生成独立文字或 PNG logo 水印版"
+    )
+    mark.add_argument("source", type=Path)
+    mark.add_argument("--out", type=Path, default=paths["out"])
+    kind = mark.add_mutually_exclusive_group(required=True)
+    kind.add_argument("--text")
+    kind.add_argument("--logo", type=Path)
+    kind.add_argument("--exif", action="store_true")
+    mark.add_argument(
+        "--corner",
+        choices=("top-left", "top-right", "bottom-left", "bottom-right"),
+        default="bottom-right",
+    )
+    mark.add_argument("--width-pct", type=float, default=18)
+    mark.add_argument("--opacity", type=int, default=65)
+    mark.add_argument("--format", choices=("jpeg", "png"), default="jpeg")
+    export = sub.add_parser(
+        "export", help="将一批已渲染的 SDR JPEG/PNG 另存为指定尺寸、质量及水印的交付版"
+    )
+    export.add_argument("sources", type=Path, nargs="+")
+    export.add_argument("--out", type=Path, default=paths["out"])
+    for cmd in (run, export):
+        cmd.add_argument("--export-format", choices=("jpeg", "png"))
+        cmd.add_argument("--long-edge", type=int)
+        cmd.add_argument("--jpeg-quality", type=int)
+        cmd.add_argument("--srgb", action="store_true")
+        mark_group = cmd.add_mutually_exclusive_group()
+        mark_group.add_argument("--watermark-text")
+        mark_group.add_argument("--watermark-logo", type=Path)
+        mark_group.add_argument("--watermark-exif", action="store_true")
+        cmd.add_argument(
+            "--watermark-corner",
+            choices=("top-left", "top-right", "bottom-left", "bottom-right"),
+        )
+        cmd.add_argument("--watermark-width", type=float)
+        cmd.add_argument("--watermark-opacity", type=int)
+    config = sub.add_parser("paths", help="查看目录，或设置工作目录")
+    for key in paths:
+        config.add_argument("--" + key, type=Path)
+    mcp = sub.add_parser("mcp", help="启动可选的 stdio MCP 服务")
+    for key in paths:
+        mcp.add_argument("--" + key, type=Path, default=paths[key])
     args = parser.parse_args()
+    if args.cmd == "paths":
+        updates = {
+            k: getattr(args, k).expanduser().resolve()
+            for k in paths
+            if getattr(args, k) is not None
+        }
+        if updates:
+            paths.update(updates)
+            save_paths(paths)
+        return {k: str(v) for k, v in paths.items()}
+    if args.cmd == "mcp":
+        server = Path(__file__).resolve().with_name("mcp_server.py")
+        os.execv(
+            sys.executable,
+            [
+                sys.executable,
+                str(server),
+                *(part for k in paths for part in ("--" + k, str(getattr(args, k)))),
+            ],
+        )
+
+    if args.cmd == "watermark":
+        from watermark import stamp
+
+        return stamp(
+            args.source.resolve(),
+            args.out.resolve(),
+            text=args.text,
+            exif=args.exif,
+            logo=args.logo,
+            corner=args.corner,
+            width_pct=args.width_pct,
+            opacity=args.opacity,
+            fmt=args.format,
+        )
+    if args.cmd == "hnnr":
+        return hnnr(
+            args.source.resolve(),
+            args.watch.resolve(),
+            args.out.resolve(),
+            args.mode,
+            args.timeout,
+        )
     if args.cmd == "capabilities":
         return {
             k: {"range": [lo, hi], "storage_key": field}
@@ -319,18 +586,90 @@ def main():
         return {
             "version": data["Version"],
             "current": data["CurrentIx"],
+            "curves": {
+                name: [[pt["X"], pt["Y"]] for pt in curve.get("Points", [])]
+                for name, curve in zip(CURVES, values.get("Gradations", []))
+            },
             "history": [row.get("Name") for row in data["ImageSettings"]],
+            "geometry": data["ImageSettings"][data["CurrentIx"]]
+            .get("ImageDescription", {})
+            .get("RelativeCrop"),
+            "rotation": data["ImageSettings"][data["CurrentIx"]]
+            .get("ImageDescription", {})
+            .get("Rotation"),
             "values": {
                 k: (round(math.log2(values[f]), 3) if k == "exposure" else values[f])
                 for k, (f, *_) in FIELDS.items()
                 if f in values
             },
         }
-    if args.cmd == "variant":
-        return variant(
-            args.source.resolve(), args.out.resolve(), edits(args.set, FIELDS)
+    delivery = None
+    if args.cmd in ("export", "render"):
+        mark_requested = (
+            args.watermark_text is not None
+            or args.watermark_logo is not None
+            or args.watermark_exif
         )
-    changes = edits(args.set, FIELDS)
+        style_requested = any(
+            v is not None
+            for v in (
+                args.watermark_corner,
+                args.watermark_width,
+                args.watermark_opacity,
+            )
+        )
+        if style_requested and not mark_requested:
+            raise ValueError("请为水印样式指定文字或 logo")
+        if (
+            args.cmd == "export"
+            or mark_requested
+            or args.srgb
+            or any(
+                v is not None
+                for v in (args.export_format, args.long_edge, args.jpeg_quality)
+            )
+        ):
+            from watermark import validate_export
+
+            delivery = dict(
+                fmt=args.export_format or "jpeg",
+                long_edge=args.long_edge,
+                quality=args.jpeg_quality,
+                srgb=args.srgb,
+                text=args.watermark_text,
+                exif=args.watermark_exif,
+                logo=args.watermark_logo,
+                corner=args.watermark_corner or "bottom-right",
+                width_pct=args.watermark_width
+                if args.watermark_width is not None
+                else 18,
+                opacity=args.watermark_opacity
+                if args.watermark_opacity is not None
+                else 65,
+            )
+            validate_export(**delivery)
+    if args.cmd == "export":
+        from watermark import export_image
+
+        outputs = []
+        for src in args.sources:
+            try:
+                outputs.append(
+                    {
+                        "source": str(src.resolve()),
+                        **export_image(src.resolve(), args.out.resolve(), **delivery),
+                    }
+                )
+            except (OSError, ValueError) as exc:
+                outputs.append({"source": str(src), "error": str(exc)})
+                print(json.dumps(outputs, ensure_ascii=False))
+                sys.exit(1)
+        return outputs
+    changes = adjustment_args(args)
+    if args.cmd == "variant":
+        if not changes:
+            raise ValueError("请提供 --set、--crop 或 --rotate")
+        return variant(args.source.resolve(), args.out.resolve(), changes)
     if args.timeout < 1:
         raise ValueError("--timeout 必须大于 0")
     output = []
@@ -344,6 +683,7 @@ def main():
                     args.out.resolve(),
                     changes,
                     args.timeout,
+                    delivery,
                 )
             )
         except (ValueError, OSError) as err:
