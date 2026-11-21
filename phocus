@@ -4,6 +4,7 @@
 import argparse
 import contextlib
 import fcntl
+import xml.parsers.expat
 import json
 import math
 import os
@@ -32,7 +33,10 @@ FIELDS = {
     "grain_size": ("FilmGrainSize", 0, 100, "ApplyFilmGrain"),
     "grain_roughness": ("FilmGrainRoughness", 0, 100, "ApplyFilmGrain"),
     "sharpen_amount": ("USMAmount", 0, 200, "ApplyUSM"),
-    "noise_filter_bias": ("NoiseFilterBias", 0, 100, "ApplyNoiseFilterBias"),
+    "noise_filter_bias": ("NoiseFilterBias", -10, 10, "ApplyNoiseFilterBias"),
+    "color_noise_radius": ("ColorNoiseRadius", 0, 50, "ApplyCNFilter"),
+    "moire_removal": ("MoireRemoval", 0, 5, "ApplyCNFilter"),
+    "remove_checkerboard": ("GreenGreen", 0, 1, "ApplyCNFilter"),
 }
 CACHE = Path.home() / "Library/Caches/phocus-cli"
 
@@ -81,11 +85,16 @@ def sidecar(path):
 def load_settings(path):
     with sidecar(path).open("rb") as stream:
         data = plistlib.load(stream)
+    if not isinstance(data, dict) or not isinstance(data.get("ImageSettings"), list):
+        raise ValueError("无法识别 .phos 调整记录")
     rows = data["ImageSettings"]
-    ix = data["CurrentIx"]
+    ix = data.get("CurrentIx")
     if type(ix) is not int or not 0 <= ix < len(rows):
         raise ValueError("无法识别 .phos 当前版本索引")
-    return data, rows[ix]["ImageCorrection"]
+    row = rows[ix]
+    if not isinstance(row, dict) or not isinstance(row.get("ImageCorrection"), dict):
+        raise ValueError("当前版本缺少 ImageCorrection")
+    return data, row["ImageCorrection"]
 
 
 def copy_raw(src, dest):
@@ -110,7 +119,12 @@ def apply_offline(path, changes):
         field, _, _, switch = FIELDS[key]
         if field not in settings or (switch and switch not in settings):
             raise ValueError("该 .phos 缺少字段: " + field)
-        settings[field] = 2.0**value if key == "exposure" else value
+        if key == "exposure":
+            settings[field] = 2.0**value
+        elif key == "remove_checkerboard":
+            settings[field] = bool(value)
+        else:
+            settings[field] = value
         if switch:
             settings[switch] = True
     with sidecar(path).open("wb") as stream:
@@ -221,6 +235,7 @@ def hot_pass(src, watch, spool, changes, timeout):
                         ValueError,
                         KeyError,
                         plistlib.InvalidFileException,
+                        xml.parsers.expat.ExpatError,
                     ):
                         pass
                     time.sleep(0.15)
@@ -347,6 +362,7 @@ if __name__ == "__main__":
         KeyError,
         IndexError,
         plistlib.InvalidFileException,
+        xml.parsers.expat.ExpatError,
     ) as err:
         print(json.dumps({"error": str(err)}, ensure_ascii=False), file=sys.stderr)
         sys.exit(1)

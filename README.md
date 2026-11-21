@@ -1,72 +1,94 @@
-# Phocus CLI 与 MCP Bridge
+# Phocus CLI & MCP Bridge
 
-在 macOS 上批量处理哈苏 .3FR。命令写入工作副本的 .phos 调整记录，再把副本交给 Hasselblad Phocus 的「自动输出新的图像」。可直接在其他应用中工作。CLI 和 MCP 均不使用鼠标、键盘、截图、辅助功能、屏幕录制或模型 API。原片与原有调整保存在原处。本项目是独立开发的适配器。
+[![macOS tests](https://github.com/wenz-ai/phocus-cli/actions/workflows/tests.yml/badge.svg)](https://github.com/wenz-ai/phocus-cli/actions/workflows/tests.yml)
 
-## 第一次使用
+用一条命令批量调整哈苏 RAW，由 **Hasselblad Phocus** 在 Mac 上导出全尺寸成片。摄影师可以保留多个可编辑版本；AI 客户端可以先看整张构图，再取一块原尺寸细节判断降噪与锐化。工具在本地读写工作副本，原片和已有调整保存在原处。
 
-CLI 使用 Python 3.9+ 和 macOS 自带的 cp、sips。文件夹最好在同一个 APFS 卷上，这样 200 MB 的 RAW 可以用写时复制创建工作副本。离线 inspect、variant 只需现有 .phos。render 需要打开官方 Phocus，首次配置时会用到一次官方的输出窗口。
+*A local CLI and stdio MCP server for Hasselblad Phocus. Batch-edit RAW copies, render through the desktop app’s hot folder, and request previews only when needed. Tested on macOS with Phocus 4.2.3 and X2D 100C files. Independently developed.*
 
-1. 准备三个目录。watch 用来接收临时 RAW，spool 接收 Phocus 的导出，out 保存整理后的成片。spool 和 out 都放在 watch 以外。
-2. 在 Phocus 中手动导出一张照片到 spool，选全尺寸 JPEG、含源文件名的命名预设，以及「输出后没有后续步骤」。使用单个输出，关闭附加输出。热文件夹沿用这组设置。
-3. 在 Phocus 的文件浏览器中选中 watch 文件夹，勾选「文件 → 自动输出新的图像」。Phocus 可留在其他应用后面。渲染期间保持 Phocus 的浏览目录与输出预设不变。结束后再次点击该菜单取消勾选，再切换到日常照片目录。
-4. 运行下面的命令。将示例路径换成实际路径。每张成片和与源 RAW 同名的 .phos 都放在新的结果目录中。
+## 先试一个离线版本
+
+安装 Python 3.9 或以上版本。下载仓库后，CLI 使用 Python 标准库和 macOS 自带工具。
 
 ```sh
+git clone https://github.com/wenz-ai/phocus-cli.git
+cd phocus-cli
 ./phocus capabilities
-./phocus inspect /photos/sample.3FR
-./phocus variant /photos/sample.3FR --out /photos/variants --set exposure=0.5 highlights=20
-./phocus render /photos/sample.3FR --watch /photos/inbox --spool /photos/spool --out /photos/results --set exposure=0.5 highlights=20
-./phocus render /photos/day/*.3FR --watch /photos/inbox --spool /photos/spool --out /photos/results --set temperature=5000
+./phocus inspect "/photos/sample.3FR"
+./phocus variant "/photos/sample.3FR" --out "/photos/variants" \
+  --set exposure=0.33 highlights=15
 ```
 
-所有命令返回 JSON。render 可以一次传多张，按顺序完成。没有 .phos 的原片若要调参，会先由 Phocus 生成这张照片自己的调整记录，再渲染目标效果。已有 .phos 则直接在它的当前版本上调整。离线制作多个可编辑版本用 variant，输出是 RAW 和配套的 .phos。inspect 返回当前设置和历史版本名称。exposure 以 EV 为单位，temperature 用 K；其他参数的取值范围见 capabilities。
+`inspect` 和 `variant` 使用这张 RAW 自己的 `.3FR.phos` 文件，Phocus 可以关闭。成功后 `variant` 返回新目录中的 RAW 与调整记录，打开该副本即可继续编辑。只有裸 RAW 时，直接用下方的 `render`。
 
-一次输出的默认等待时间是 90 秒，可用 --timeout 调整。超时会报告任务路径，保留工作副本供检查。先检查 Phocus 是否仍在浏览 watch、是否启用了自动输出、输出位置和命名是否正确。批处理遇错时，JSON 会列出此前成功的项目和出错的源文件。
+## 让 Phocus 在后台出片
 
-## MCP
+1. 建立三个目录。例如 `/photos/inbox` 接收临时 RAW，`/photos/spool` 接收 Phocus 导出，`/photos/results` 存放最终结果。后两个目录均在 inbox 以外。
+2. 在 Phocus 中选一张照片，手动导出一次到 spool。选**全尺寸 JPEG**，命名预设包含源文件名，关闭附加输出，导出后操作选“无”。这会记住输出格式与目的地。
+3. 在 Phocus 文件浏览器选中 inbox，勾选 **文件 → 自动输出新的图像**（File → Export New Images Automatically）。现在可以切到其他应用。Phocus 需要保持打开，并停留在 inbox。
+4. 完成后取消这个勾选，再回到日常照片目录。Phocus 的监看对象随浏览目录改变。
 
-MCP 使用官方 Python SDK 的 stdio 传输。用 Python 3.10+ 创建虚拟环境，版本 1.30.0 已实测。
+```sh
+./phocus render /photos/session/*.3FR \
+  --watch /photos/inbox --spool /photos/spool --out /photos/results \
+  --set noise_filter_bias=4 color_noise_radius=12
+```
+
+上例是比较降噪效果的起点。每张照片得到一个新结果目录，含成片及配套的 `.phos`。已有 sidecar 的照片只需一次渲染。对没有 sidecar 的原片设置参数时，工具先让 Phocus 为它生成调整记录，再用第二轮渲染出片。APFS 同卷可利用写时复制。超时默认每轮 90 秒，可通过 `--timeout` 修改；错误信息包含可恢复的工作副本路径。
+
+## 能调哪些参数
+
+| 用途 | 参数与范围 |
+|---|---|
+| 明暗 | `exposure` −4 至 +4 EV；`contrast`、`brightness` −50 至 50；`highlights`、`shadows` −100 至 100 |
+| 色彩 | `temperature` 2500–10000 K，`saturation`、`vibrance` −50 至 50 |
+| 清晰度与锐化 | `clarity` −100 至 100，`detail` −10 至 10，`sharpen_amount` 0–200。测试 detail 时请同时给 clarity 一个非零值 |
+| 胶片颗粒 | `grain_amount`、`grain_size`、`grain_roughness` 0–100。修改其中一项会开启颗粒 |
+| 常规降噪 | `noise_filter_bias` −10 至 10 对应亮度降噪，`color_noise_radius` 0–50 控制彩色降噪 |
+| 图案校正 | `moire_removal` 0–5 处理全局摩尔纹，`remove_checkerboard` 0/1 控制棋盘格校正 |
+
+**HNNR 的支持情况。** 哈苏的 HNNR 使用本地 AI 模型。Phocus 4.2.3 的 Mac 版说明给出的入口是缩略图右键菜单，可选 Prioritise Purity 或 Prioritise Detail。本工具已接入上表的常规降噪，尚未接入 HNNR。全局摩尔纹及棋盘格校正适用于特定成像问题，适合用原尺寸局部对照判断效果。[哈苏 Phocus](https://www.hasselblad.com/phocus/phocus-for-pc-mac/)
+
+## 接入 MCP
+
+使用 Python 3.10+。CLI 本身可单独使用。
 
 ```sh
 python3 -m venv .venv
 .venv/bin/python -m pip install 'mcp==1.30.0'
 ```
 
-客户端的 command 填虚拟环境 Python 的绝对路径，args 按下列顺序填写。library 允许读取源 .3FR，out 存放派生结果。
+以下为支持 `mcpServers` 配置格式的客户端示例。终端工作目录可能与图形应用不同，请填写绝对路径。library 是可读取的 RAW 根目录，out 是派生图片的根目录。
 
 ```json
 {
-  "command": "/path/to/phocus-cli/.venv/bin/python",
-  "args": [
-    "/path/to/phocus-cli/mcp_server.py",
-    "--library", "/photos",
-    "--watch", "/photos/inbox",
-    "--spool", "/photos/spool",
-    "--out", "/photos/results"
-  ]
+  "mcpServers": {
+    "phocus": {
+      "command": "/path/to/phocus-cli/.venv/bin/python",
+      "args": [
+        "/path/to/phocus-cli/mcp_server.py",
+        "--library", "/photos/session",
+        "--watch", "/photos/inbox",
+        "--spool", "/photos/spool",
+        "--out", "/photos/results"
+      ]
+    }
+  }
 }
 ```
 
-| 工具 | 结果 |
+| 工具 | 用法 |
 |---|---|
-| capabilities | 参数、单位对应的存储字段和输入范围 |
-| inspect_photo | 一张照片的当前调整和历史名称 |
-| make_variant | 独立的可编辑副本路径 |
-| render_photos | 一次提交多张照片和一组参数，返回成片路径、分辨率、耗时 |
-| preview_result | 按需返回最长边 1280 像素的 JPEG，供模型判断下一步调整 |
+| `capabilities` | 查询参数、范围与对应的 Phocus 字段 |
+| `inspect_photo` | 读取已保存的调整及历史版本名称 |
+| `make_variant` | 创建新的可编辑 RAW 副本 |
+| `render_photos` | 一次提交多张照片与一组参数，返回文件路径、尺寸及耗时 |
+| `preview_result` | 默认返回长边 1280 像素的总览。传入 `crop: [x, y, width, height]` 取左上角起算的原尺寸局部，每边最多 1280 像素 |
 
-## 实测条件
+例如，比较同张照片两种降噪设置时，可以让助手“各导出一版，取两张成片相同位置的 512 × 512 暗部，再看整张”。只有调用预览工具时，图片才会进入所连接的 MCP 客户端。
 
-实测环境为 macOS、Phocus 4.2.3、X2D 100C 的 11656 × 8742 RAW、全尺寸 JPEG。写入适配 .phos 版本 31、ImageCorrection 版本 11。支持的参数反映此版本已观察到的字段，零值和开关保留各工具自身的含义，例如修改颗粒大小也会启用颗粒。其他相机、Phocus 版本、HDR 和 TIFF 工作流需要分别验证。
+## 验证与兼容性
 
-Phocus 需要保持运行，并占用本机的解码算力。没有 MCP 主机时 CLI 也能工作。锁屏、休眠以及在同一个 Phocus 实例里同时手动浏览别的目录不在此次后台验证范围内。
+已验证的组合是 macOS、Phocus 4.2.3、X2D 100C、全尺寸 JPEG、sidecar 版本 31 / ImageCorrection 版本 11。锁屏、休眠、其他机型、其他 Phocus 版本和 TIFF/HDR 导出仍需分别验证。一次 16 张次的旧版基准测试中，约 212 MB 的 RAW 渲染中位数为 3.91 秒；一次仅生成离线副本约 0.04 秒。速度取决于硬件、存储和输出预设。
 
-[哈苏官方 Phocus](https://www.hasselblad.com/phocus/phocus-for-pc-mac/) · [Phocus 4.2.3 热文件夹实测](https://blog.tonalphoto.com/phocus-hot-folder-batch-processing/) · [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk)
-
-### 成本与画面对照
-
-同一张约 212 MB 的 X2D 原片、同一 JPEG 预设、本机 APFS。一次不改参数加 15 次单参数任务共 16 次完整导出。已有 sidecar 时中位数 3.912 秒，范围 3.280–4.642 秒。每个任务包含准备副本、官方渲染、校验导出记录/分辨率和归档。一次全新 RAW 带调整的 MCP 请求执行两轮，用时 7.667 秒。离线生成副本含 CLI 冷启动，15 次中位数 0.041 秒。
-
-解码并对照实际 JPEG。曝光、反差、亮度、高光、暗部、色温、饱和度、自然饱和度、清晰度、锐化、降噪偏置与三项颗粒调节均得到有别于基线的输出。颗粒组测试包含开启颗粒的影响。清晰度为零时改变 detail 未测出差异，清晰度为 40 时将 detail 从 0 改至 8 可测出差异。这里验证了照片会变，具体审美仍需看预览。
-
-前台通过 macOS 应用激活通知和约 50 毫秒一次的采样交叉检查。逐张调用系统导出框的早期原型曾触发 Phocus 激活，现有热文件夹版本在实测中没有触发。一次 render_photos 调用可传多张并等待完成，默认只回传文本。只有 preview_result 返回图像。没有采集模型账单或同任务的 Computer Use token 数。
+[验证记录及复跑命令](TESTING.md) · [GitHub Actions](https://github.com/wenz-ai/phocus-cli/actions/workflows/tests.yml) · [Phocus 热文件夹工作方式](https://blog.tonalphoto.com/phocus-hot-folder-batch-processing/)

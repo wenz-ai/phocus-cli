@@ -80,8 +80,8 @@ def render_photos(photos: list[str], changes: dict[str, float]) -> list[dict]:
 
 
 @server.tool()
-def preview_result(file: str) -> Image:
-    """Return a 1280px JPEG for visual comparison when needed. Accepts a rendered output's path."""
+def preview_result(file: str, crop: list[int] | None = None) -> Image:
+    """Return a 1280px overview, or a native-resolution crop [x, y, width, height] from the top left."""
     path = (output / file).resolve(strict=True)
     if not path.is_relative_to(output) or path.suffix.lower() not in {
         ".jpg",
@@ -91,13 +91,38 @@ def preview_result(file: str) -> Image:
         ".png",
     }:
         raise ValueError("请指定输出目录中的成片")
+    transform = ["-Z", "1280"]
+    if crop is not None:
+        if len(crop) != 4:
+            raise ValueError("crop 应为 [x, y, width, height]")
+        x, y, width, height = crop
+        if min(x, y) < 0 or not (1 <= width <= 1280 and 1 <= height <= 1280):
+            raise ValueError("起点应为非负整数，局部预览每边为 1–1280 像素")
+        size = subprocess.check_output(
+            ["/usr/bin/sips", "-g", "pixelWidth", "-g", "pixelHeight", str(path)],
+            text=True,
+        )
+        dimensions = dict(
+            line.strip().split(": ", 1) for line in size.splitlines() if ": " in line
+        )
+        if x + width > int(dimensions["pixelWidth"]) or y + height > int(
+            dimensions["pixelHeight"]
+        ):
+            raise ValueError("局部预览超出图像边界")
+        transform = [
+            "--cropToHeightWidth",
+            str(height),
+            str(width),
+            "--cropOffset",
+            str(y),
+            str(x),
+        ]
     with tempfile.TemporaryDirectory() as folder:
         dest = Path(folder) / "preview.jpg"
         proc = subprocess.run(
             [
                 "/usr/bin/sips",
-                "-Z",
-                "1280",
+                *transform,
                 "-s",
                 "format",
                 "jpeg",

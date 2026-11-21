@@ -69,6 +69,52 @@ class SidecarTests(unittest.TestCase):
         self.assertEqual(len(copies), 1)
         self.assertTrue(api["sidecar"](copies[0]).is_file())
 
+    def test_every_control_validates_both_endpoints(self):
+        for name, (_, lo, hi, _) in api["FIELDS"].items():
+            for val in (lo, hi):
+                with self.subTest(name=name, value=val):
+                    self.assertEqual(
+                        api["edits"]([f"{name}={val}"], api["FIELDS"]), {name: val}
+                    )
+            for val in (lo - 1, hi + 1):
+                with self.subTest(name=name, value=val), self.assertRaises(ValueError):
+                    api["edits"]([f"{name}={val}"], api["FIELDS"])
+
+    def test_checkerboard_is_a_plist_boolean(self):
+        data = plistlib.loads(self.content)
+        data["ImageSettings"][1]["ImageCorrection"].update(
+            GreenGreen=False, ApplyCNFilter=False
+        )
+        self.file.write_bytes(plistlib.dumps(data))
+        result = api["variant"](self.raw, self.root, {"remove_checkerboard": 1})
+        _, settings = api["load_settings"](Path(result["raw"]))
+        self.assertIs(settings["GreenGreen"], True)
+        self.assertIs(settings["ApplyCNFilter"], True)
+
+    def test_unknown_and_malformed_sidecars_report_cli_error(self):
+        import json
+        import subprocess
+
+        cli = Path(__file__).with_name("phocus")
+        for payload in (
+            b"<?xml version='1.0'?><plist><dict>",
+            plistlib.dumps({"ImageSettings": [], "CurrentIx": 0}),
+        ):
+            self.file.write_bytes(payload)
+            result = subprocess.run(
+                [str(cli), "inspect", str(self.raw)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("error", json.loads(result.stderr))
+
+    def test_same_output_and_watch_rejected_before_staging(self):
+        with self.assertRaises(ValueError):
+            api["render"](self.raw, self.root, self.root, self.root, {}, 1)
+        self.assertFalse(list(self.root.glob("phjob*")))
+
 
 if __name__ == "__main__":
     unittest.main()
