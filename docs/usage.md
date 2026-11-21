@@ -103,3 +103,9 @@ MCP 的 `render_photos` 和 `make_variant` 支持同样的设置。例如：
 `phocus exposure-stats 成片.jpg` 返回 8 位 sRGB 成片红、绿、蓝三个通道各自落在 0 和 255 的像素数及百分比。用 `--region 0 0 1 0.3` 只检查画面顶部 30%。坐标以按 EXIF 方向显示的画面为准，从左上角起算。带 ICC 的图片先转换到 sRGB。
 
 MCP 调用 `analyze_exposure` 时传入 `{"file":"成片.jpg","region":[0,0,1,0.3]}`。例如拍演出时，可以单独检查红色舞台灯附近的红通道。这个数值反映当前导出效果；判断 RAW 还有多少可恢复细节，需要调整曝光再渲染比较。
+
+## 径向局部曝光
+
+`phocus render 照片.3FR --radial-mask 人脸 0.48 0.36 0.12 0.18 0 0.35 inside 0.5` 会在椭圆内提亮半档。名称之后依次为中心 X/Y、水平和垂直半径、角度（度）、羽化（0–1）、inside 或 outside、曝光 EV。中心和半径相对未裁切原图的宽高。同名简单椭圆会更新，复杂图层请换一个名称。
+
+MCP 的 `make_variant` 与 `render_photos` 接受 `radial_masks: [{"name":"人脸","center":[0.48,0.36],"radii":[0.12,0.18],"feather":0.35,"ev":0.5}]`。
