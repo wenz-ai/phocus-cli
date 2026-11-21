@@ -127,6 +127,18 @@ class LinearMask(BaseModel):
     ev: float = Field(ge=-4, le=4)
 
 
+class RadialMask(BaseModel):
+    """Ellipse in original image coordinates. Radii are fractions of image width and height."""
+    model_config = ConfigDict(extra="forbid")
+    name: str
+    center: tuple[float, float]
+    radii: tuple[float, float]
+    angle: float = Field(default=0, ge=-180, le=180)
+    feather: float = Field(default=0.1, ge=0, le=1)
+    side: Literal["inside", "outside"] = "inside"
+    ev: float = Field(ge=-4, le=4)
+
+
 def adjustment_args(
     *,
     changes,
@@ -138,6 +150,7 @@ def adjustment_args(
     color_bands,
     clear_color_bands,
     linear_masks,
+    radial_masks,
 ):
     args = ["--set", *(f"{k}={v}" for k, v in changes.items())] if changes else []
     if crop is not None:
@@ -165,6 +178,8 @@ def adjustment_args(
         )
     for mask in linear_masks or []:
         args.extend(["--linear-mask", mask.name, *mask.full, *mask.zero, mask.ev])
+    for mask in radial_masks or []:
+        args.extend(["--radial-mask", mask.name, *mask.center, *mask.radii, mask.angle, mask.feather, mask.side, mask.ev])
     if clear_color_bands:
         args.append("--clear-color-bands")
     return args
@@ -218,6 +233,7 @@ def make_variant(
     color_bands: list[ColorBand] | None = None,
     clear_color_bands: bool = False,
     linear_masks: list[LinearMask] | None = None,
+    radial_masks: list[RadialMask] | None = None,
 ) -> dict:
     """Create an editable RAW copy offline. Crop is normalized [left, top, right, bottom]; rotate is degrees CCW."""
     return call(
@@ -235,6 +251,7 @@ def make_variant(
             color_bands=color_bands,
             clear_color_bands=clear_color_bands,
             linear_masks=linear_masks,
+            radial_masks=radial_masks,
         ),
     )
 
@@ -251,6 +268,7 @@ def render_photos(
     color_bands: list[ColorBand] | None = None,
     clear_color_bands: bool = False,
     linear_masks: list[LinearMask] | None = None,
+    radial_masks: list[RadialMask] | None = None,
     delivery: Delivery | None = None,
 ) -> list[dict]:
     """Render RAW masters with optional SDR delivery copies. Curves map rgb/red/green/blue/luma to [x,y] points (0..255); crop is normalized LTRB and rotate is degrees CCW."""
@@ -275,6 +293,7 @@ def render_photos(
             color_bands=color_bands,
             clear_color_bands=clear_color_bands,
             linear_masks=linear_masks,
+            radial_masks=radial_masks,
         ),
         *delivery_args(delivery),
     )
