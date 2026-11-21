@@ -1,5 +1,8 @@
 # Phocus CLI & MCP Bridge
 
+[功能覆盖与待开发项目](CAPABILITIES.md) · [含官方 HNNR 的 Beta 版本](https://github.com/wenz-ai/phocus-cli/releases/tag/v0.2.0-beta.1)
+
+
 [![macOS tests](https://github.com/wenz-ai/phocus-cli/actions/workflows/tests.yml/badge.svg)](https://github.com/wenz-ai/phocus-cli/actions/workflows/tests.yml)
 
 用一条命令批量调整哈苏 RAW，由 **Hasselblad Phocus** 在 Mac 上导出全尺寸成片。摄影师可以保留多个可编辑版本；AI 客户端可以先看整张构图，再取一块原尺寸细节判断降噪与锐化。工具在本地读写工作副本，原片和已有调整保存在原处。
