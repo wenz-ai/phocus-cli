@@ -57,3 +57,7 @@ phocus export "照片.jpg" --long-edge 2048 --watermark-text "晴天"
 - **在其他 AI 客户端接入**：支持 MCP 的客户端可以调用 `phocus mcp`，获取结构化工具和原尺寸局部预览。[MCP 配置示例](docs/usage.md#可选-mcp)
 
 本项目独立开发，已在 Hasselblad X2D 100C 与 Mac 版 Phocus 4.2.3 上验证。[查看验证记录](TESTING.md)
+
+## 许可证
+
+项目代码以 [MIT 许可证](LICENSE) 开源，欢迎提交 Issue 和 PR。哈苏 Phocus 软件及品牌素材沿用各自的授权。
