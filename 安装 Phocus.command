@@ -7,7 +7,7 @@ dest="$(mktemp -d "$root/installs/1.2.0.XXXXXX")"
 ready=false
 trap 'if [ "$ready" = false ]; then rm -rf "$dest"; fi' EXIT
 echo '正在安装 Phocus CLI 和 Codex Skill…'
-cp "$src"/{phocus,tone_controls.py,watermark.py,workspace_paths.py,mcp_server.py,official_frames.py} "$dest/"
+cp "$src"/{phocus,local_masks.py,tone_controls.py,watermark.py,workspace_paths.py,mcp_server.py,official_frames.py} "$dest/"
 cp -R "$src/native" "$src/skills" "$src/frames" "$dest/"
 py=''
 for candidate in "$(command -v python3 || true)" /opt/homebrew/bin/python3 /usr/local/bin/python3; do

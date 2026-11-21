@@ -14,3 +14,5 @@ description: 使用本机 Phocus CLI 给哈苏 .3FR 调色、裁切、HNNR 降�
 - 用户说哈苏专属框或 Earth Explorer 时使用 `phocus frames export FILE --styles explorer-1`（或 MCP `export_official_frames`）。用 `frames list` 看 9 个款式，`all` 输出当前照片可用款式。输入需为哈苏 RAW 或保留 EXIF 的未加框 SDR JPEG。文字、EXIF 和普通 logo 水印仍走 `export`。
 
 - 主体颜色需要单独调整时，用 `phocus sample PREVIEW --at X Y` 获取预览的候选色相，再用 `--color-band HUE WIDTH SHIFT SAT LIGHT` 渲染对比。相近肤色也可能受影响，检查同位置的局部预览。需要压黑场、提中间调时用 `--levels rgb BLACK MID WHITE`，仅有某通道偏色时可指定 red、green 或 blue。
+
+- 画面只需从一侧渐变变暗时，使用命名线性调节层，坐标顺序为满强度到零强度。例：`--linear-mask sky 0.5 0.1 0.5 0.55 -1`。
