@@ -2,10 +2,34 @@ import tempfile
 import unittest
 from pathlib import Path
 from PIL import Image
-from official_frames import STYLES, STYLE_MARK, prepare, select_styles
+from official_frames import STYLES, STYLE_MARK, prepare, select_styles, ensure_backend
 
 
 class FrameTests(unittest.TestCase):
+    def test_start_profile_when_colima_has_removed_its_context(self):
+        from unittest.mock import patch
+        from subprocess import CompletedProcess
+
+        with tempfile.TemporaryDirectory() as tmp:
+            profile = Path(tmp) / "phocus-frames/colima.yaml"
+            profile.parent.mkdir()
+            profile.touch()
+            replies = [
+                CompletedProcess([], 1, "", "missing"),
+                CompletedProcess([], 0, "", ""),
+                CompletedProcess([], 0, "unix:///test.sock", ""),
+            ]
+            with (
+                patch.dict("os.environ", {"COLIMA_HOME": tmp}),
+                patch("official_frames.shutil.which", return_value="/bin/tool"),
+                patch("official_frames.subprocess.run", side_effect=replies) as run,
+            ):
+                ensure_backend()
+                self.assertEqual(
+                    run.call_args_list[1].args[0],
+                    ["colima", "start", "phocus-frames", "--activate=false"],
+                )
+
     def test_picker_order_and_eligibility(self):
         self.assertEqual(list(STYLES.values()), [12, 6, 7, 1, 2, 3, 4, 8, 9])
         self.assertEqual(len(select_styles(["all"], False)), 7)
