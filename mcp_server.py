@@ -117,6 +117,16 @@ class ColorBand(BaseModel):
     lightness: float = Field(default=0, ge=-50, le=50)
 
 
+class LinearMask(BaseModel):
+    """Exposure reaches ev at full and zero at zero. Coordinates are normalized to the original photo."""
+
+    model_config = ConfigDict(extra="forbid")
+    name: str
+    full: tuple[float, float]
+    zero: tuple[float, float]
+    ev: float = Field(ge=-4, le=4)
+
+
 def settings(
     changes,
     crop=None,
@@ -126,6 +136,7 @@ def settings(
     levels=None,
     color_bands=None,
     clear_color_bands=False,
+    linear_masks=None,
 ):
     args = ["--set", *(f"{k}={v}" for k, v in changes.items())] if changes else []
     if crop is not None:
@@ -151,6 +162,8 @@ def settings(
                 band.lightness,
             ]
         )
+    for mask in linear_masks or []:
+        args.extend(["--linear-mask", mask.name, *mask.full, *mask.zero, mask.ev])
     if clear_color_bands:
         args.append("--clear-color-bands")
     return args
@@ -190,6 +203,7 @@ def make_variant(
     levels: dict[str, Levels] | None = None,
     color_bands: list[ColorBand] | None = None,
     clear_color_bands: bool = False,
+    linear_masks: list[LinearMask] | None = None,
 ) -> dict:
     """Create an editable RAW copy offline. Crop is normalized [left, top, right, bottom]; rotate is degrees CCW."""
     return call(
@@ -206,6 +220,7 @@ def make_variant(
             levels,
             color_bands,
             clear_color_bands,
+            linear_masks,
         ),
     )
 
@@ -221,6 +236,7 @@ def render_photos(
     levels: dict[str, Levels] | None = None,
     color_bands: list[ColorBand] | None = None,
     clear_color_bands: bool = False,
+    linear_masks: list[LinearMask] | None = None,
     delivery: Delivery | None = None,
 ) -> list[dict]:
     """Render RAW masters with optional SDR delivery copies. Curves map rgb/red/green/blue/luma to [x,y] points (0..255); crop is normalized LTRB and rotate is degrees CCW."""
@@ -244,6 +260,7 @@ def render_photos(
             levels,
             color_bands,
             clear_color_bands,
+            linear_masks,
         ),
         *delivery_args(delivery),
     )

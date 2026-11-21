@@ -82,3 +82,9 @@ MCP 的 `render_photos` 和 `make_variant` 支持同样的设置。例如：
 {"photos":["sample.3FR"],"color_bands":[{"hue":"yellow","width":25,"shift":12,"saturation":0.75}],"levels":{"rgb":{"black":12,"mid":1.2,"white":242}}}
 ```
 用 `sample_color` 取样，或用 `inspect_photo` 查看已保存的 `levels` 与 `color_bands`。
+
+### 线性渐变曝光
+
+`--linear-mask 名称 满强度X 满强度Y 零强度X 零强度Y EV` 为原始图像坐标（左上角为原点，0–1）。满强度端向外保持指定 EV；两点间渐变，到零强度端另一侧恢复原图。例如 `--linear-mask sky 0.5 0.1 0.5 0.55 -1` 压暗画面上部。可重复添加不同名称；再次指定同名简单渐变会更新该层。使用包含裁切或旋转的照片时，仍按未裁切的原始图像定位。
+
+`render_photos` 或 `make_variant` 的对应参数是 `linear_masks: [{"name":"sky","full":[0.5,0.1],"zero":[0.5,0.55],"ev":-1}]`。输出为 Phocus 可继续编辑的调节层。`inspect_photo` 可读回层名、曝光和位置。

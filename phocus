@@ -17,6 +17,7 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
+from local_masks import inspect_masks, linear_args, put_linear
 from tone_controls import (
     apply_levels,
     apply_bands,
@@ -165,6 +166,9 @@ def apply_offline(path, changes):
     if data["Version"] != 31 or settings.get("streamableVersion") != 11:
         raise ValueError("未验证的 .phos 格式版本")
     for key, value in changes.items():
+        if key == "linear_masks":
+            put_linear(settings, value)
+            continue
         if key == "levels":
             apply_levels(settings, value)
             continue
@@ -408,6 +412,9 @@ def curve_args(specs):
 
 def adjustment_args(args):
     changes = edits(args.set, FIELDS)
+    masks = linear_args(getattr(args, "linear_mask", None))
+    if masks:
+        changes["linear_masks"] = masks
     levels = levels_args(getattr(args, "levels", None))
     if levels:
         changes["levels"] = levels
@@ -545,6 +552,12 @@ def main():
     run.add_argument("--set", nargs="+", default=[], metavar="KEY=VALUE")
     run.add_argument("--timeout", type=int, default=90)
     for command in (var, run):
+        command.add_argument(
+            "--linear-mask",
+            nargs=6,
+            action="append",
+            metavar=("NAME", "FULL_X", "FULL_Y", "ZERO_X", "ZERO_Y", "EV"),
+        )
         command.add_argument(
             "--levels",
             nargs=4,
@@ -729,6 +742,7 @@ def main():
         return {
             "version": data["Version"],
             "current": data["CurrentIx"],
+            "masks": inspect_masks(values),
             "levels": inspect_levels(values),
             "color_bands": inspect_bands(values),
             "curves": {
