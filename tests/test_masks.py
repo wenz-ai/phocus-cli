@@ -75,3 +75,23 @@ class LinearMaskTests(unittest.TestCase):
             layer_adjustments([["face", "temperature", 200]])
         with self.assertRaises(ValueError):
             apply_layer_adjustments(c, {"missing": {"clarity": 9}})
+
+    def test_round_dust_spots_bind_to_camera_and_update_by_center(self):
+        import tempfile
+        from pathlib import Path
+        from PIL import Image
+        from dust_spots import apply_dust_spots, dust_args, read_dust_spots
+
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "sensor.3FR"
+            Image.new("L", (2, 2)).save(src, format="TIFF", tiffinfo={50735: "test-body"})
+            c = {"AdjustmentLayers": {"Width": 100, "Height": 100}, "DustPointCount": 0}
+            apply_dust_spots(c, src, dust_args([[20, 30, 10, 1]]))
+            apply_dust_spots(c, src, dust_args([[20, 30, 14, 2]]))
+            self.assertEqual(c["DustPointCount"], 1)
+            self.assertEqual(read_dust_spots(c), [{"x":20,"y":30,"radius":14,"amount":2}])
+            with self.assertRaises(ValueError):
+                apply_dust_spots(c, src, dust_args([[100, 5, 20, 1]]))
+            c["DustSerialNumber"] = "different"
+            with self.assertRaises(ValueError):
+                apply_dust_spots(c, src, dust_args([[10, 50, 20, 1]]))

@@ -17,6 +17,7 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
+from dust_spots import dust_args, read_dust_spots, apply_dust_spots
 from local_masks import inspect_masks, linear_args, radial_args, put_masks, layer_adjustments, apply_layer_adjustments
 from tone_controls import (
     apply_levels,
@@ -166,6 +167,9 @@ def apply_offline(path, changes):
     if data["Version"] != 31 or settings.get("streamableVersion") != 11:
         raise ValueError("未验证的 .phos 格式版本")
     for key, value in changes.items():
+        if key == "dust_spots":
+            apply_dust_spots(settings, path, value)
+            continue
         if key == "masks":
             put_masks(settings, value)
             continue
@@ -415,6 +419,9 @@ def curve_args(specs):
 
 def adjustment_args(args):
     changes = edits(args.set, FIELDS)
+    spots = dust_args(getattr(args, "dust_spot", None))
+    if spots:
+        changes["dust_spots"] = spots
     masks = linear_args(getattr(args, "linear_mask", None))
     masks.extend(radial_args(getattr(args, "radial_mask", None)))
     if len({m["name"] for m in masks}) != len(masks):
@@ -561,6 +568,7 @@ def main():
     run.add_argument("--set", nargs="+", default=[], metavar="KEY=VALUE")
     run.add_argument("--timeout", type=int, default=90)
     for command in (var, run):
+        command.add_argument("--dust-spot", nargs=4, action="append", metavar=("X", "Y", "RADIUS", "AMOUNT"))
         command.add_argument("--layer-adjust", nargs=3, action="append", metavar=("NAME", "FIELD", "VALUE"))
         command.add_argument("--radial-mask", nargs=9, action="append",
                              metavar=("NAME", "CX", "CY", "RX", "RY", "DEG", "FEATHER", "SIDE", "EV"))
@@ -779,6 +787,7 @@ def main():
             "version": data["Version"],
             "current": data["CurrentIx"],
             "masks": inspect_masks(values),
+            "dust_spots": read_dust_spots(values),
             "levels": inspect_levels(values),
             "color_bands": inspect_bands(values),
             "curves": {

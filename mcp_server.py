@@ -131,6 +131,15 @@ class LinearMask(BaseModel):
     ev: float = Field(ge=-4, le=4)
 
 
+class DustSpot(BaseModel):
+    """Round sensor spot on the original, unrotated image, in pixels."""
+    model_config = ConfigDict(extra="forbid")
+    x: float = Field(ge=0)
+    y: float = Field(ge=0)
+    radius: float = Field(ge=5, le=200)
+    amount: float = Field(default=1, ge=1, le=10)
+
+
 class RadialMask(BaseModel):
     """Ellipse in original image coordinates. Radii are fractions of image width and height."""
     model_config = ConfigDict(extra="forbid")
@@ -155,6 +164,7 @@ def adjustment_args(
     clear_color_bands,
     linear_masks,
     radial_masks,
+    dust_spots,
     layer_adjustments,
 ):
     args = ["--set", *(f"{k}={v}" for k, v in changes.items())] if changes else []
@@ -183,6 +193,8 @@ def adjustment_args(
         )
     for mask in linear_masks or []:
         args.extend(["--linear-mask", mask.name, *mask.full, *mask.zero, mask.ev])
+    for spot in dust_spots or []:
+        args.extend(["--dust-spot", spot.x, spot.y, spot.radius, spot.amount])
     for mask in radial_masks or []:
         args.extend(["--radial-mask", mask.name, *mask.center, *mask.radii, mask.angle, mask.feather, mask.side, mask.ev])
     for name, edits in (layer_adjustments or {}).items():
@@ -242,6 +254,7 @@ def make_variant(
     clear_color_bands: bool = False,
     linear_masks: list[LinearMask] | None = None,
     radial_masks: list[RadialMask] | None = None,
+    dust_spots: list[DustSpot] | None = None,
     layer_adjustments: dict[str, dict[str, float]] | None = None,
 ) -> dict:
     """Create an editable RAW copy offline. Crop is normalized [left, top, right, bottom]; rotate is degrees CCW."""
@@ -261,6 +274,7 @@ def make_variant(
             clear_color_bands=clear_color_bands,
             linear_masks=linear_masks,
             radial_masks=radial_masks,
+            dust_spots=dust_spots,
             layer_adjustments=layer_adjustments,
         ),
     )
@@ -279,6 +293,7 @@ def render_photos(
     clear_color_bands: bool = False,
     linear_masks: list[LinearMask] | None = None,
     radial_masks: list[RadialMask] | None = None,
+    dust_spots: list[DustSpot] | None = None,
     layer_adjustments: dict[str, dict[str, float]] | None = None,
     delivery: Delivery | None = None,
     batch_id: str | None = None,
@@ -306,6 +321,7 @@ def render_photos(
             clear_color_bands=clear_color_bands,
             linear_masks=linear_masks,
             radial_masks=radial_masks,
+            dust_spots=dust_spots,
             layer_adjustments=layer_adjustments,
         ),
         *delivery_args(delivery),

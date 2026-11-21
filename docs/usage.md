@@ -104,6 +104,12 @@ MCP 的 `render_photos` 和 `make_variant` 支持同样的设置。例如：
 
 MCP 调用 `analyze_exposure` 时传入 `{"file":"成片.jpg","region":[0,0,1,0.3]}`。例如拍演出时，可以单独检查红色舞台灯附近的红通道。这个数值反映当前导出效果；判断 RAW 还有多少可恢复细节，需要调整曝光再渲染比较。
 
+## 原生除尘点
+
+`phocus render 照片.3FR --dust-spot 2436 2360 80 1` 在未裁切、未旋转原图的像素坐标 X=2436、Y=2360 创建圆形除尘点。半径使用原生面板范围 5–200 像素，强度为 1–10。重复参数可处理多个点，同中心圆点会更新。适合在同一机身、相同原图尺寸的一组照片中清理固定位置的传感器灰尘。机身标识直接从当前 RAW 读取。
+
+MCP 参数为 `dust_spots: [{"x":2436,"y":2360,"radius":80,"amount":1}]`，可用 `inspect_photo` 回读圆点。已有其他形状保留。
+
 ## 给调节层校色
 
 `--layer-adjust 人脸 temperature 13 --layer-adjust 人脸 highlights 27` 只改变名为“人脸”的原生调节层。可在同一次调用中先创建线性或径向蒙版。MCP 的对应字段为 `layer_adjustments: {"人脸":{"temperature":13,"highlights":27}}`。temperature、tint、highlights、shadows、saturation、clarity 为 −100 至 100；sharpness 为 −500 至 500；moire 为 −5 至 5。色温使用 Phocus 局部面板的相对刻度。已有图层的启用状态、蒙版和未指定参数保留。
