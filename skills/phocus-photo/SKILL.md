@@ -16,3 +16,5 @@ description: 使用本机 Phocus CLI 给哈苏 .3FR 调色、裁切、HNNR 降�
 - 主体颜色需要单独调整时，用 `phocus sample PREVIEW --at X Y` 获取预览的候选色相，再用 `--color-band HUE WIDTH SHIFT SAT LIGHT` 渲染对比。相近肤色也可能受影响，检查同位置的局部预览。需要压黑场、提中间调时用 `--levels rgb BLACK MID WHITE`，仅有某通道偏色时可指定 red、green 或 blue。
 
 - 画面只需从一侧渐变变暗时，使用命名线性调节层，坐标顺序为满强度到零强度。例：`--linear-mask sky 0.5 0.1 0.5 0.55 -1`。
+
+- 检查曝光时用 `phocus exposure-stats 成片.jpg` 或 MCP `analyze_exposure` 查看 RGB 各通道的黑白端点比例。用 `--region LEFT TOP RIGHT BOTTOM` 在归一化选区内检查天空或肤色。结果只描述当前 SDR 成片。

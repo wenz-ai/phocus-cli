@@ -175,15 +175,28 @@ def capabilities() -> dict:
     return call("capabilities")
 
 
-@server.tool()
-def sample_color(file: str, x: float, y: float, radius: int = 4) -> dict:
-    """Sample an sRGB preview at normalized (x,y) from top left. estimated_hue is a starting point for a color band; neutral patches return null."""
+def sdr_path(file: str) -> Path:
     path = (library / file).resolve(strict=True)
     if not any(
         path.is_relative_to(root) for root in (library, output)
     ) or path.suffix.lower() not in {".jpeg", ".jpg", ".png"}:
         raise ValueError("请选择 library 或输出目录中的 SDR 预览")
-    return call("sample", path, "--at", x, y, "--radius", radius)
+    return path
+
+
+@server.tool()
+def analyze_exposure(
+    file: str, region: tuple[float, float, float, float] | None = None
+) -> dict:
+    """Count pixels at 0 and 255 per sRGB channel in a rendered SDR JPEG/PNG. Optional normalized oriented LTRB region. Measures the rendition, not RAW sensor clipping."""
+    args = ["--region", *region] if region is not None else []
+    return call("exposure-stats", sdr_path(file), *args)
+
+
+@server.tool()
+def sample_color(file: str, x: float, y: float, radius: int = 4) -> dict:
+    """Sample an sRGB preview at normalized (x,y) from top left. estimated_hue is a starting point for a color band; neutral patches return null."""
+    return call("sample", sdr_path(file), "--at", x, y, "--radius", radius)
 
 
 @server.tool()

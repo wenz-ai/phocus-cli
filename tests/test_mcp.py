@@ -69,6 +69,7 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
                 {
                     "capabilities",
                     "sample_color",
+                    "analyze_exposure",
                     "denoise_raw",
                     "watermark_result",
                     "export_photos",
@@ -203,6 +204,44 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
                 "export_photos", {"files": ["escape.jpg"], "delivery": {}}
             )
             self.assertTrue(res.isError)
+
+    async def test_oriented_exposure_endpoints_and_bounds(self):
+        async with self.connected() as client:
+            img = Image.new("RGB", (4, 2), (245, 10, 10))
+            img.paste((255, 0, 3), (0, 0, 1, 2))
+            exif = Image.Exif()
+            exif[274] = 6
+            img.save(self.out / "ramp.png", exif=exif)
+            req = {"file": str(self.out / "ramp.png")}
+
+            async def stats(**kwargs):
+                result = await client.call_tool("analyze_exposure", {**req, **kwargs})
+                self.assertFalse(result.isError, result.content)
+                return json.loads(result.content[0].text)
+
+            full = await stats()
+            self.assertEqual(full["image_size"], [2, 4])
+            self.assertEqual(full["channels"]["red"]["at_255_pct"], 25)
+            part = await stats(region=[0, 0, 1, 0.25])
+            self.assertEqual(part["pixels"], 2)
+            self.assertEqual(part["channels"]["green"]["at_0_pct"], 100)
+            self.assertEqual(part["channels"]["blue"]["at_0"], 0)
+            for bounds in ([0, 0, 0, 1], [-1, 0, 1, 1]):
+                self.assertTrue(
+                    (
+                        await client.call_tool(
+                            "analyze_exposure", {**req, "region": bounds}
+                        )
+                    ).isError
+                )
+            outside = self.base / "outside.png"
+            img.save(outside)
+            (self.library / "linked.png").symlink_to(outside)
+            self.assertTrue(
+                (
+                    await client.call_tool("analyze_exposure", {"file": "linked.png"})
+                ).isError
+            )
 
     async def test_color_sampling_and_offline_recipe(self):
         async with self.connected() as client:
