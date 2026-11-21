@@ -54,3 +54,24 @@ class LinearMaskTests(unittest.TestCase):
             invalid[index] = bad
             with self.assertRaises(ValueError):
                 radial_args([invalid])
+
+    def test_local_edits_leave_mask_geometry_and_other_controls_in_place(self):
+        from local_masks import apply_layer_adjustments, layer_adjustments
+
+        c = {"AdjustmentLayers": {"streamableVersion": 1}}
+        mask = radial_args([["face", 0.5, 0.5, 0.2, 0.1, 0, 0.2, "inside", 0.5]])
+        put_masks(c, mask)
+        apply_layer_adjustments(
+            c,
+            layer_adjustments(
+                [["face", "temperature", 13], ["face", "highlights", 27]]
+            ),
+        )
+        put_masks(c, mask)
+        self.assertEqual(
+            inspect_masks(c)[0]["adjustments"], {"temperature": 13, "highlights": 27}
+        )
+        with self.assertRaises(ValueError):
+            layer_adjustments([["face", "temperature", 200]])
+        with self.assertRaises(ValueError):
+            apply_layer_adjustments(c, {"missing": {"clarity": 9}})

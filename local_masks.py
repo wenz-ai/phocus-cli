@@ -4,6 +4,54 @@
 import math
 
 
+# Phocus adjustment layer slider units, measured on Mac 4.2.3.
+LAYER_FIELDS = {
+    "temperature": ("Temp", -100, 100),
+    "tint": ("Tint", -100, 100),
+    "highlights": ("Recovery", -100, 100),
+    "shadows": ("Shadow", -100, 100),
+    "saturation": ("Saturation", -100, 100),
+    "clarity": ("Clarity", -100, 100),
+    "sharpness": ("Sharpness", -500, 500),
+    "moire": ("Moire", -5, 5),
+}
+NATIVE_LAYER_FIELDS = {field for field, _, _ in LAYER_FIELDS.values()}
+
+
+def layer_adjustments(rows):
+    result = {}
+    for name, key, raw in rows or []:
+        if key not in LAYER_FIELDS:
+            raise ValueError("可用图层参数：" + ", ".join(LAYER_FIELDS))
+        value = float(raw)
+        _, low, high = LAYER_FIELDS[key]
+        if not low <= value <= high:
+            raise ValueError(f"{key} 范围为 {low}–{high}")
+        changes = result.setdefault(name, {})
+        if key in changes:
+            raise ValueError(f"同一图层参数重复：{name} {key}")
+        changes[key] = value
+    return result
+
+
+def apply_layer_adjustments(settings, edits):
+    container = settings.get("AdjustmentLayers") or {}
+    if container.get("streamableVersion") != 1:
+        raise ValueError("无法识别调节层格式")
+    for name, changes in edits.items():
+        matches = [
+            layer for layer in container.get("Layers", []) if layer.get("Name") == name
+        ]
+        if (
+            len(matches) != 1
+            or matches[0].get("streamableVersion") != 1
+            or matches[0].get("LayerType") not in (0, 2)
+        ):
+            raise ValueError(f"需要唯一的原生调节层：{name}")
+        for key, value in changes.items():
+            matches[0][LAYER_FIELDS[key][0]] = value
+
+
 def _validate_name(name, masks):
     if not name.strip() or len(name) > 90 or not name.isprintable():
         raise ValueError("蒙版名称需为 1–90 个可打印字符")
@@ -87,7 +135,8 @@ def put_masks(settings, masks):
                 or len(layer.get(key, [])) != 1
                 or any(
                     k
-                    not in {
+                    not in NATIVE_LAYER_FIELDS
+                    | {
                         "Active",
                         "EV",
                         key,
@@ -138,6 +187,13 @@ def inspect_masks(settings):
             "ev": layer.get("EV", 0),
             "inverted": layer.get("MaskInvert", False),
         }
+        edits = {
+            key: layer[field]
+            for key, (field, _, _) in LAYER_FIELDS.items()
+            if field in layer
+        }
+        if edits:
+            entry["adjustments"] = edits
         gradients = []
         for g in layer.get("GradientList", []):
             if all(
