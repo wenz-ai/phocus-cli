@@ -24,3 +24,5 @@ description: 使用本机 Phocus CLI 给哈苏 .3FR 调色、裁切、HNNR 降�
 - 长批次给 render 或 export 指定 `--batch-id`。遇到失败先报告 completed、failed、pending，再用原文件列表、输出目录和配方重跑同一批次。
 
 - 用户要看前后对比时，用 `phocus compare 调整前.jpg 调整后.jpg`；需要看 HNNR 或肤色细节时加 `--crop X Y WIDTH HEIGHT`。MCP 的 `preview_result` 可传 `compare_with`，左为 file，右为 compare_with。
+
+- 不规则局部使用 `--brush-stroke 名称 paint 半径 EV X:Y ...`，擦除使用 erase。蒙版内白平衡或高光用 `--layer-adjust 名称 temperature 数值` 或 highlights。传感器灰尘用 `--dust-spot X Y 半径 强度`，坐标为未裁切原图像素。
