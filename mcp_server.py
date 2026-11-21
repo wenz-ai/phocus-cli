@@ -92,7 +92,41 @@ def delivery_args(options):
 Curves = dict[str, list[tuple[StrictInt, StrictInt]]]
 
 
-def settings(changes, crop=None, rotate=None, curves=None, straighten=None):
+class Levels(BaseModel):
+    """Input black and white in 0..255, midpoint 1 is neutral."""
+
+    model_config = ConfigDict(extra="forbid")
+    black: StrictInt = Field(default=0, ge=0, le=254)
+    mid: float = Field(default=1, ge=0.1, le=4)
+    white: StrictInt = Field(default=255, ge=1, le=255)
+
+
+class ColorBand(BaseModel):
+    """One native selective color point; hue may be degrees or a color name."""
+
+    model_config = ConfigDict(extra="forbid")
+    hue: (
+        float
+        | Literal[
+            "red", "orange", "yellow", "green", "cyan", "blue", "purple", "magenta"
+        ]
+    )
+    width: float = Field(default=30, ge=1, le=90)
+    shift: float = Field(default=0, ge=-45, le=45)
+    saturation: float = Field(default=1, ge=0.3, le=1.7)
+    lightness: float = Field(default=0, ge=-50, le=50)
+
+
+def settings(
+    changes,
+    crop=None,
+    rotate=None,
+    curves=None,
+    straighten=None,
+    levels=None,
+    color_bands=None,
+    clear_color_bands=False,
+):
     args = ["--set", *(f"{k}={v}" for k, v in changes.items())] if changes else []
     if crop is not None:
         if len(crop) != 4:
@@ -104,6 +138,21 @@ def settings(changes, crop=None, rotate=None, curves=None, straighten=None):
         args.extend(["--rotate", rotate])
     for channel, points in (curves or {}).items():
         args.extend(["--curve", channel, *(f"{x}:{y}" for x, y in points)])
+    for channel, entry in (levels or {}).items():
+        args.extend(["--levels", channel, entry.black, entry.mid, entry.white])
+    for band in color_bands or []:
+        args.extend(
+            [
+                "--color-band",
+                band.hue,
+                band.width,
+                band.shift,
+                band.saturation,
+                band.lightness,
+            ]
+        )
+    if clear_color_bands:
+        args.append("--clear-color-bands")
     return args
 
 
@@ -111,6 +160,17 @@ def settings(changes, crop=None, rotate=None, curves=None, straighten=None):
 def capabilities() -> dict:
     """List edit keys, numeric ranges and native sidecar fields."""
     return call("capabilities")
+
+
+@server.tool()
+def sample_color(file: str, x: float, y: float, radius: int = 4) -> dict:
+    """Sample an sRGB preview at normalized (x,y) from top left. estimated_hue is a starting point for a color band; neutral patches return null."""
+    path = (library / file).resolve(strict=True)
+    if not any(
+        path.is_relative_to(root) for root in (library, output)
+    ) or path.suffix.lower() not in {".jpeg", ".jpg", ".png"}:
+        raise ValueError("请选择 library 或输出目录中的 SDR 预览")
+    return call("sample", path, "--at", x, y, "--radius", radius)
 
 
 @server.tool()
@@ -127,6 +187,9 @@ def make_variant(
     rotate: int | None = None,
     curves: Curves | None = None,
     straighten: float | None = None,
+    levels: dict[str, Levels] | None = None,
+    color_bands: list[ColorBand] | None = None,
+    clear_color_bands: bool = False,
 ) -> dict:
     """Create an editable RAW copy offline. Crop is normalized [left, top, right, bottom]; rotate is degrees CCW."""
     return call(
@@ -134,7 +197,16 @@ def make_variant(
         source_path(photo),
         "--out",
         output,
-        *settings(changes, crop, rotate, curves, straighten),
+        *settings(
+            changes,
+            crop,
+            rotate,
+            curves,
+            straighten,
+            levels,
+            color_bands,
+            clear_color_bands,
+        ),
     )
 
 
@@ -146,6 +218,9 @@ def render_photos(
     rotate: int | None = None,
     curves: Curves | None = None,
     straighten: float | None = None,
+    levels: dict[str, Levels] | None = None,
+    color_bands: list[ColorBand] | None = None,
+    clear_color_bands: bool = False,
     delivery: Delivery | None = None,
 ) -> list[dict]:
     """Render RAW masters with optional SDR delivery copies. Curves map rgb/red/green/blue/luma to [x,y] points (0..255); crop is normalized LTRB and rotate is degrees CCW."""
@@ -160,7 +235,16 @@ def render_photos(
         spool,
         "--out",
         output,
-        *settings(changes, crop, rotate, curves, straighten),
+        *settings(
+            changes,
+            crop,
+            rotate,
+            curves,
+            straighten,
+            levels,
+            color_bands,
+            clear_color_bands,
+        ),
         *delivery_args(delivery),
     )
 

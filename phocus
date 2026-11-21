@@ -17,6 +17,14 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
+from tone_controls import (
+    apply_levels,
+    apply_bands,
+    levels_args,
+    bands_args,
+    inspect_levels,
+    inspect_bands,
+)
 
 # storage key, conservative input bounds, enable switch
 FIELDS = {
@@ -157,6 +165,12 @@ def apply_offline(path, changes):
     if data["Version"] != 31 or settings.get("streamableVersion") != 11:
         raise ValueError("未验证的 .phos 格式版本")
     for key, value in changes.items():
+        if key == "levels":
+            apply_levels(settings, value)
+            continue
+        if key == "selective":
+            apply_bands(settings, value["bands"], value["clear"])
+            continue
         if key == "curves":
             for channel, points in value.items():
                 curve = settings["Gradations"][CURVES[channel]]
@@ -394,6 +408,13 @@ def curve_args(specs):
 
 def adjustment_args(args):
     changes = edits(args.set, FIELDS)
+    levels = levels_args(getattr(args, "levels", None))
+    if levels:
+        changes["levels"] = levels
+    bands = bands_args(getattr(args, "color_band", None))
+    clear = getattr(args, "clear_color_bands", False)
+    if bands or clear:
+        changes["selective"] = {"bands": bands, "clear": clear}
     curves = curve_args(getattr(args, "curve", None))
     if curves:
         changes["curves"] = curves
@@ -505,7 +526,7 @@ def main():
     from workspace_paths import read_paths, save_paths
 
     paths = read_paths()
-    parser.add_argument("--version", action="version", version="Phocus CLI 1.1.1")
+    parser.add_argument("--version", action="version", version="Phocus CLI 1.2.0")
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("capabilities", help="列出参数、数值范围和可用路径")
     inspect = sub.add_parser("inspect", help="离线读取当前调整、版本和历史")
@@ -524,6 +545,19 @@ def main():
     run.add_argument("--set", nargs="+", default=[], metavar="KEY=VALUE")
     run.add_argument("--timeout", type=int, default=90)
     for command in (var, run):
+        command.add_argument(
+            "--levels",
+            nargs=4,
+            action="append",
+            metavar=("CHANNEL", "BLACK", "MID", "WHITE"),
+        )
+        command.add_argument(
+            "--color-band",
+            nargs=5,
+            action="append",
+            metavar=("HUE", "WIDTH", "SHIFT", "SAT", "LIGHT"),
+        )
+        command.add_argument("--clear-color-bands", action="store_true")
         command.add_argument(
             "--crop", type=float, nargs=4, metavar=("LEFT", "TOP", "RIGHT", "BOTTOM")
         )
@@ -600,7 +634,15 @@ def main():
     export_frames.add_argument("--long-edge", type=int)
     export_frames.add_argument("--quality", type=int, default=95)
     export_frames.add_argument("--out", type=Path, default=paths["out"])
+    sample = sub.add_parser("sample", help="在 SDR 预览中取样，估算选色中心")
+    sample.add_argument("source", type=Path)
+    sample.add_argument("--at", type=float, nargs=2, metavar=("X", "Y"), required=True)
+    sample.add_argument("--radius", type=int, default=4)
     args = parser.parse_args()
+    if args.cmd == "sample":
+        from tone_controls import sample_color
+
+        return sample_color(args.source.resolve(), *args.at, args.radius)
     if args.cmd == "frames":
         from official_frames import render_frames, style_list
 
@@ -687,6 +729,8 @@ def main():
         return {
             "version": data["Version"],
             "current": data["CurrentIx"],
+            "levels": inspect_levels(values),
+            "color_bands": inspect_bands(values),
             "curves": {
                 name: [[pt["X"], pt["Y"]] for pt in curve.get("Points", [])]
                 for name, index in CURVES.items()
@@ -771,7 +815,9 @@ def main():
     changes = adjustment_args(args)
     if args.cmd == "variant":
         if not changes:
-            raise ValueError("请提供 --set、--crop 或 --rotate")
+            raise ValueError(
+                "请至少提供一项调整（--set、--levels、--color-band、--crop 等）"
+            )
         return variant(args.source.resolve(), args.out.resolve(), changes)
     if args.timeout < 1:
         raise ValueError("--timeout 必须大于 0")
