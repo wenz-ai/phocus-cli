@@ -52,6 +52,21 @@ def main():
         "color_noise_radius": 40,
         "moire_removal": 5,
         "remove_checkerboard": 1,
+        "sharpen_radius": 2.8,
+        "sharpen_threshold": 20,
+        "sharpen_dark_limit": 35,
+        "grain_type": 2,
+        "grain_color": 80,
+        "lens_corrections": 1,
+        "vignette_amount": 90,
+        "defringe_purple": 80,
+        "defringe_green": 80,
+        "keystone_horizontal": 15,
+        "keystone_vertical": 15,
+        "keystone_aspect": 10,
+        "mono_red": 60,
+        "mono_green": 20,
+        "mono_blue": 65,
         "monochrome": 1,
     }
     available = json.loads(subprocess.check_output([str(CLI), "capabilities"]))
@@ -103,6 +118,10 @@ def main():
             # Define the baseline explicitly so existing edits don't silently cancel the test.
             neutral = {
                 "temperature": 4200,
+                "sharpen_radius": 1,
+                "mono_red": 21,
+                "mono_green": 72,
+                "mono_blue": 7,
                 "sharpen_amount": 60,
                 "grain_amount": 40,
                 "grain_size": 20,

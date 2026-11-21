@@ -92,12 +92,14 @@ def delivery_args(options):
 Curves = dict[str, list[tuple[StrictInt, StrictInt]]]
 
 
-def settings(changes, crop=None, rotate=None, curves=None):
+def settings(changes, crop=None, rotate=None, curves=None, straighten=None):
     args = ["--set", *(f"{k}={v}" for k, v in changes.items())] if changes else []
     if crop is not None:
         if len(crop) != 4:
             raise ValueError("crop 需要四个边界")
         args.extend(["--crop", *crop])
+    if straighten is not None:
+        args.extend(["--straighten", straighten])
     if rotate is not None:
         args.extend(["--rotate", rotate])
     for channel, points in (curves or {}).items():
@@ -124,6 +126,7 @@ def make_variant(
     crop: list[float] | None = None,
     rotate: int | None = None,
     curves: Curves | None = None,
+    straighten: float | None = None,
 ) -> dict:
     """Create an editable RAW copy offline. Crop is normalized [left, top, right, bottom]; rotate is degrees CCW."""
     return call(
@@ -131,7 +134,7 @@ def make_variant(
         source_path(photo),
         "--out",
         output,
-        *settings(changes, crop, rotate, curves),
+        *settings(changes, crop, rotate, curves, straighten),
     )
 
 
@@ -142,9 +145,10 @@ def render_photos(
     crop: list[float] | None = None,
     rotate: int | None = None,
     curves: Curves | None = None,
+    straighten: float | None = None,
     delivery: Delivery | None = None,
 ) -> list[dict]:
-    """Render RAW masters with optional SDR delivery copies. Curves map rgb/red/green/blue to [x,y] points (0..255); crop is normalized LTRB and rotate is degrees CCW."""
+    """Render RAW masters with optional SDR delivery copies. Curves map rgb/red/green/blue/luma to [x,y] points (0..255); crop is normalized LTRB and rotate is degrees CCW."""
     if not photos:
         raise ValueError("photos 至少需要一张照片")
     return call(
@@ -156,7 +160,7 @@ def render_photos(
         spool,
         "--out",
         output,
-        *settings(changes, crop, rotate, curves),
+        *settings(changes, crop, rotate, curves, straighten),
         *delivery_args(delivery),
     )
 
@@ -175,6 +179,45 @@ def export_photos(files: list[str], delivery: Delivery) -> list[dict]:
             raise ValueError("请选择 library 或输出目录内的 JPEG/PNG")
         paths.append(path)
     return call("export", *paths, "--out", output, *delivery_args(delivery))
+
+
+@server.tool()
+def list_official_frames() -> dict:
+    """List all 7 Hasselblad and 2 Earth Explorer styles in the Windows Phocus 4.2 picker."""
+    return call("frames", "list")
+
+
+@server.tool()
+def export_official_frames(
+    file: str, styles: list[str], long_edge: int | None = None, quality: int = 95
+) -> dict:
+    """Render genuine Windows Phocus frames on Hasselblad RAW (first render the master) or an unframed SDR JPEG. Use ["all"] for all eligible styles. Long edge limits photo content before framing."""
+    path = (library / file).resolve(strict=True)
+    if path.suffix.lower() == ".3fr":
+        path = source_path(file)
+    if not any(
+        path.is_relative_to(base) for base in (library, output)
+    ) or path.suffix.lower() not in {".jpg", ".jpeg", ".3fr"}:
+        raise ValueError("请选择 library 或输出目录内的哈苏 RAW 或未加框的 JPEG 母版")
+    if not styles:
+        raise ValueError("请选择款式或 all")
+    options = ["--long-edge", long_edge] if long_edge is not None else []
+    return call(
+        "frames",
+        "export",
+        path,
+        "--styles",
+        *styles,
+        "--watch",
+        watch,
+        "--spool",
+        spool,
+        "--out",
+        output,
+        "--quality",
+        quality,
+        *options,
+    )
 
 
 @server.tool()
