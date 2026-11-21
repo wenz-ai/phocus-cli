@@ -39,6 +39,7 @@ def main():
         "highlights": 40,
         "shadows": 30,
         "temperature": 6500,
+        "tint_native": 0.015,
         "saturation": -30,
         "vibrance": 30,
         "clarity": 40,

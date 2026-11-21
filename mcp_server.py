@@ -6,6 +6,8 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Literal
+from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
 from mcp.server.fastmcp import FastMCP, Image
 
@@ -46,7 +48,51 @@ def call(*args):
     return json.loads(proc.stdout)
 
 
-def settings(changes, crop=None, rotate=None):
+class Delivery(BaseModel):
+    """Optional SDR file exported from the Phocus master. Dimensions never upscale."""
+
+    model_config = ConfigDict(extra="forbid")
+    format: Literal["jpeg", "png"] = "jpeg"
+    long_edge: int | None = Field(default=None, ge=1, le=65535)
+    jpeg_quality: int | None = Field(default=None, ge=1, le=100)
+    srgb: bool = False
+    watermark_exif: bool = False
+    watermark_text: str | None = None
+    watermark_logo: str | None = None
+    watermark_corner: (
+        Literal["top-left", "top-right", "bottom-left", "bottom-right"] | None
+    ) = None
+    watermark_width: float | None = None
+    watermark_opacity: int | None = None
+
+
+def library_logo(name):
+    asset = (library / name).resolve(strict=True)
+    if not asset.is_relative_to(library) or asset.suffix.lower() != ".png":
+        raise ValueError("请选择 library 内的 PNG")
+    return asset
+
+
+def delivery_args(options):
+    if options is None:
+        return []
+    values = options.model_dump(exclude_none=True)
+    args = ["--export-format", values.pop("format")]
+    if values.pop("watermark_exif"):
+        args.append("--watermark-exif")
+    if values.pop("srgb"):
+        args.append("--srgb")
+    if "watermark_logo" in values:
+        values["watermark_logo"] = library_logo(values["watermark_logo"])
+    for key, v in values.items():
+        args.extend(["--" + key.replace("_", "-"), v])
+    return args
+
+
+Curves = dict[str, list[tuple[StrictInt, StrictInt]]]
+
+
+def settings(changes, crop=None, rotate=None, curves=None):
     args = ["--set", *(f"{k}={v}" for k, v in changes.items())] if changes else []
     if crop is not None:
         if len(crop) != 4:
@@ -54,6 +100,8 @@ def settings(changes, crop=None, rotate=None):
         args.extend(["--crop", *crop])
     if rotate is not None:
         args.extend(["--rotate", rotate])
+    for channel, points in (curves or {}).items():
+        args.extend(["--curve", channel, *(f"{x}:{y}" for x, y in points)])
     return args
 
 
@@ -72,24 +120,31 @@ def inspect_photo(photo: str) -> dict:
 @server.tool()
 def make_variant(
     photo: str,
-    changes: dict[str, float],
+    changes: dict[str, float] | None = None,
     crop: list[float] | None = None,
     rotate: int | None = None,
+    curves: Curves | None = None,
 ) -> dict:
     """Create an editable RAW copy offline. Crop is normalized [left, top, right, bottom]; rotate is degrees CCW."""
     return call(
-        "variant", source_path(photo), "--out", output, *settings(changes, crop, rotate)
+        "variant",
+        source_path(photo),
+        "--out",
+        output,
+        *settings(changes, crop, rotate, curves),
     )
 
 
 @server.tool()
 def render_photos(
     photos: list[str],
-    changes: dict[str, float],
+    changes: dict[str, float] | None = None,
     crop: list[float] | None = None,
     rotate: int | None = None,
+    curves: Curves | None = None,
+    delivery: Delivery | None = None,
 ) -> list[dict]:
-    """Render a batch with Phocus. Crop is normalized [left, top, right, bottom]; rotate is degrees CCW."""
+    """Render RAW masters with optional SDR delivery copies. Curves map rgb/red/green/blue to [x,y] points (0..255); crop is normalized LTRB and rotate is degrees CCW."""
     if not photos:
         raise ValueError("photos 至少需要一张照片")
     return call(
@@ -101,8 +156,25 @@ def render_photos(
         spool,
         "--out",
         output,
-        *settings(changes, crop, rotate),
+        *settings(changes, crop, rotate, curves),
+        *delivery_args(delivery),
     )
+
+
+@server.tool()
+def export_photos(files: list[str], delivery: Delivery) -> list[dict]:
+    """Batch export finished SDR JPEG/PNG files from library or output, with optional sizing, sRGB and watermark."""
+    if not files:
+        raise ValueError("请选择至少一张已渲染图片")
+    paths = []
+    for file in files:
+        path = (library / file).resolve(strict=True)
+        if not any(
+            path.is_relative_to(root) for root in (library, output)
+        ) or path.suffix.lower() not in {".jpg", ".jpeg", ".png"}:
+            raise ValueError("请选择 library 或输出目录内的 JPEG/PNG")
+        paths.append(path)
+    return call("export", *paths, "--out", output, *delivery_args(delivery))
 
 
 @server.tool()
@@ -122,18 +194,19 @@ def watermark_result(
     width_pct: float = 18,
     opacity: int = 65,
     format: str = "jpeg",
+    exif: bool = False,
 ) -> dict:
     """Create a marked copy of an SDR output. Supply either text or a PNG logo from the library."""
     path = (output / file).resolve(strict=True)
     if not path.is_relative_to(output):
         raise ValueError("请选择输出目录中的成片")
-    if (text is None) == (logo is None):
-        raise ValueError("文字和 logo 只能选一种")
+    if sum((text is not None, logo is not None, exif)) != 1:
+        raise ValueError("请选择文字、拍摄参数或 logo 其中一种")
     if logo is not None:
-        asset = (library / logo).resolve(strict=True)
-        if not asset.is_relative_to(library) or asset.suffix.lower() != ".png":
-            raise ValueError("请选择 library 内的 PNG")
+        asset = library_logo(logo)
         mark = ["--logo", asset]
+    elif exif:
+        mark = ["--exif"]
     else:
         mark = ["--text", text]
     return call(

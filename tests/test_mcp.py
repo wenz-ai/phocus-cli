@@ -70,6 +70,7 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
                     "capabilities",
                     "denoise_raw",
                     "watermark_result",
+                    "export_photos",
                     "inspect_photo",
                     "make_variant",
                     "render_photos",
@@ -143,6 +144,62 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
                 "denoise_raw", {"photo": "test.3FR", "mode": "unknown"}
             )
             self.assertTrue(bad.isError)
+
+    async def test_batch_delivery_resize_color_and_permissions(self):
+        async with self.connected() as client:
+            from PIL import ImageCms
+
+            for name, size in [("large", (160, 320)), ("small", (20, 10))]:
+                im = Image.new("RGB", size, "green")
+                exif = Image.Exif()
+                exif[272] = "Test Camera"
+                im.save(self.library / (name + ".jpg"), exif=exif)
+            request = {
+                "files": ["large.jpg", "small.jpg"],
+                "delivery": {
+                    "long_edge": 80,
+                    "format": "jpeg",
+                    "jpeg_quality": 85,
+                    "srgb": True,
+                    "watermark_exif": True,
+                },
+            }
+            res = await client.call_tool("export_photos", request)
+            self.assertFalse(res.isError, res.content)
+            rows = [json.loads(c.text) for c in res.content]
+            if isinstance(rows[0], list):
+                rows = rows[0]
+            self.assertEqual([r["pixels"] for r in rows], [[40, 80], [20, 10]])
+            for row in rows:
+                self.assertEqual(row["caption"], "Test Camera")
+                with Image.open(row["output"]) as result:
+                    self.assertNotIn(272, result.getexif())
+                    profile = ImageCms.ImageCmsProfile(
+                        io.BytesIO(result.info["icc_profile"])
+                    )
+                    self.assertIn(
+                        "srgb", ImageCms.getProfileDescription(profile).lower()
+                    )
+            bad = await client.call_tool(
+                "export_photos",
+                {**request, "delivery": {"format": "png", "jpeg_quality": 80}},
+            )
+            self.assertTrue(bad.isError)
+            bad = await client.call_tool(
+                "export_photos",
+                {
+                    **request,
+                    "delivery": {"watermark_exif": True, "watermark_text": "also"},
+                },
+            )
+            self.assertTrue(bad.isError)
+            outsider = self.base / "outside.jpg"
+            Image.new("RGB", (5, 5)).save(outsider)
+            (self.library / "escape.jpg").symlink_to(outsider)
+            res = await client.call_tool(
+                "export_photos", {"files": ["escape.jpg"], "delivery": {}}
+            )
+            self.assertTrue(res.isError)
 
     async def test_overview_and_detail_preview(self):
         async with self.connected() as client:

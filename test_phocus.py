@@ -131,6 +131,39 @@ class SidecarTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "空的专用队列"):
             api["hnnr"](self.raw, self.root, self.root.parent, "purity", 30)
 
+    def test_curve_updates_only_requested_channel(self):
+        identity = {
+            "Points": [{"X": 0, "Y": 0, "DY": 1}, {"X": 255, "Y": 255, "DY": 1}],
+            "unknown": 7,
+        }
+        data = plistlib.loads(self.content)
+        data["ImageSettings"][1]["ImageCorrection"].update(
+            ApplyCurves=False, Gradations=[identity.copy() for _ in range(8)]
+        )
+        self.file.write_bytes(plistlib.dumps(data))
+        curves = api["curve_args"]([["green", "0:0", "128:175", "255:255"]])
+        target = api["variant"](self.raw, self.root, {"curves": curves})
+        _, applied = api["load_settings"](Path(target["raw"]))
+        self.assertTrue(applied["ApplyCurves"])
+        self.assertEqual(
+            applied["Gradations"][2]["Points"][1], {"X": 128, "Y": 175, "DY": 1}
+        )
+        self.assertEqual(applied["Gradations"][2]["unknown"], 7)
+        self.assertEqual(applied["Gradations"][3], identity)
+        _, original = api["load_settings"](self.raw)
+        self.assertEqual(original["Gradations"][2], identity)
+
+    def test_curve_validation(self):
+        for row in [
+            ["rgb", "4:0", "255:255"],
+            ["red", "0:0", "255:300"],
+            ["luma", "0:0", "255:255"],
+            ["rgb", "0:0", "128:8", "128:42", "255:255"],
+            ["rgb", "0:0", "invalid", "255:255"],
+        ]:
+            with self.subTest(row=row), self.assertRaises(ValueError):
+                api["curve_args"]([row])
+
     def test_checkerboard_is_a_plist_boolean(self):
         data = plistlib.loads(self.content)
         data["ImageSettings"][1]["ImageCorrection"].update(
