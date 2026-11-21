@@ -34,12 +34,36 @@ FIELDS = {
     "grain_amount": ("FilmGrainAmount", 0, 100, "ApplyFilmGrain"),
     "grain_size": ("FilmGrainSize", 0, 100, "ApplyFilmGrain"),
     "grain_roughness": ("FilmGrainRoughness", 0, 100, "ApplyFilmGrain"),
+    "sharpen_radius": ("USMRadius", 0.1, 5, "ApplyUSM"),
+    "sharpen_threshold": ("USMNoiseLimit", 0, 40, "ApplyUSM"),
+    "sharpen_dark_limit": ("USMDarkLimit", 0, 40, "ApplyUSM"),
+    "grain_type": ("FilmGrainType", 0, 2, "ApplyFilmGrain"),
+    "grain_color": ("FilmGrainColor", 0, 100, "ApplyFilmGrain"),
+    "lens_corrections": ("ApplyLensCorrection", 0, 1, None),
+    "vignette_amount": ("VignetteAmount", 0, 100, "ApplyLensCorrection"),
+    "defringe_purple": ("PurpleDefringeAmount", 0, 100, "ApplyDefringe"),
+    "defringe_green": ("GreenDefringeAmount", 0, 100, "ApplyDefringe"),
+    "keystone_horizontal": ("KeyHorizontalOffset", -100, 100, "ApplyKeystone"),
+    "keystone_vertical": ("KeyVerticalOffset", -100, 100, "ApplyKeystone"),
+    "keystone_aspect": ("KeyAspect", -50, 50, "ApplyKeystone"),
+    "mono_red": ("GrayScale", -100, 100, "ApplyGrayScale"),
+    "mono_green": ("GrayScale", -100, 100, "ApplyGrayScale"),
+    "mono_blue": ("GrayScale", -100, 100, "ApplyGrayScale"),
     "sharpen_amount": ("USMAmount", 0, 200, "ApplyUSM"),
     "noise_filter_bias": ("NoiseFilterBias", -10, 10, "ApplyNoiseFilterBias"),
     "color_noise_radius": ("ColorNoiseRadius", 0, 50, "ApplyCNFilter"),
     "moire_removal": ("MoireRemoval", 0, 5, "ApplyCNFilter"),
     "monochrome": ("ApplyGrayScale", 0, 1, None),
     "remove_checkerboard": ("GreenGreen", 0, 1, "ApplyCNFilter"),
+}
+MONO_CHANNELS = {"mono_red": 1, "mono_green": 2, "mono_blue": 3}
+FLOAT_FIELDS = {
+    "exposure",
+    "tint_native",
+    "sharpen_radius",
+    "keystone_horizontal",
+    "keystone_vertical",
+    "keystone_aspect",
 }
 CACHE = Path.home() / "Library/Caches/phocus-cli"
 
@@ -72,12 +96,16 @@ def edits(items, allowed):
         if (
             not math.isfinite(value)
             or not lo <= value <= hi
-            or (key not in {"exposure", "tint_native"} and not value.is_integer())
+            or (key not in FLOAT_FIELDS and not value.is_integer())
         ):
             raise ValueError(f"{key} 超出范围或精度不正确 ({lo}..{hi})")
+        if key == "sharpen_radius" and not math.isclose(
+            value * 10, round(value * 10), abs_tol=1e-8
+        ):
+            raise ValueError("锐化半径以 0.1 像素为步长")
         if key == "exposure" and abs(value - round(value, 2)) > 1e-8:
             raise ValueError("exposure 最多保留两位小数")
-        result[key] = value if key in {"exposure", "tint_native"} else int(value)
+        result[key] = value if key in FLOAT_FIELDS else int(value)
     return result
 
 
@@ -114,6 +142,16 @@ def check_raw(src):
         raise ValueError("当前渲染版本仅验证 .3FR 文件")
 
 
+def read_scalar(key, value):
+    if key == "exposure":
+        return round(math.log2(value), 3)
+    if key == "sharpen_radius":
+        return value / 10
+    if key in MONO_CHANNELS:
+        return value[MONO_CHANNELS[key]]
+    return value
+
+
 def apply_offline(path, changes):
     data, settings = load_settings(path)
     if data["Version"] != 31 or settings.get("streamableVersion") != 11:
@@ -121,17 +159,20 @@ def apply_offline(path, changes):
     for key, value in changes.items():
         if key == "curves":
             for channel, points in value.items():
-                curve = settings["Gradations"][CURVES.index(channel)]
+                curve = settings["Gradations"][CURVES[channel]]
                 curve["Points"] = [{"X": x, "Y": y, "DY": 1} for x, y in points]
             settings["ApplyCurves"] = True
             continue
-        if key == "crop" or key == "rotation":
+        if key in {"crop", "rotation", "straighten"}:
             geometry = data["ImageSettings"][data["CurrentIx"]]["ImageDescription"]
             if key == "crop":
                 geometry["RelativeCrop"].update(
                     dict(zip(("Left", "Top", "Right", "Bottom"), value))
                 )
-            else:
+            elif key == "straighten":
+                base = changes.get("rotation", 90 * round(geometry["Rotation"] / 90))
+                geometry["Rotation"] = float(base) + value
+            elif "straighten" not in changes:
                 geometry["Rotation"] = float(value)
             continue
         field, _, _, switch = FIELDS[key]
@@ -139,7 +180,11 @@ def apply_offline(path, changes):
             raise ValueError("该 .phos 缺少字段: " + field)
         if key == "exposure":
             settings[field] = 2.0**value
-        elif key in {"remove_checkerboard", "monochrome"}:
+        elif key == "sharpen_radius":
+            settings[field] = round(10 * value)
+        elif key in MONO_CHANNELS:
+            settings[field][MONO_CHANNELS[key]] = float(value)
+        elif key in {"remove_checkerboard", "monochrome", "lens_corrections"}:
             settings[field] = bool(value)
         else:
             settings[field] = value
@@ -321,7 +366,7 @@ def render(src, watch, spool, out, changes, timeout, delivery=None):
             remove_own_files(cleanup)
 
 
-CURVES = ("rgb", "red", "green", "blue")
+CURVES = {"rgb": 0, "red": 1, "green": 2, "blue": 3, "luma": 7}
 
 
 def curve_args(specs):
@@ -329,7 +374,9 @@ def curve_args(specs):
     for spec in specs or []:
         channel, *items = spec
         if channel not in CURVES or channel in curves:
-            raise ValueError("曲线名称必须为 rgb/red/green/blue 且每通道只能指定一次")
+            raise ValueError(
+                "曲线名称必须为 rgb/red/green/blue/luma 且每通道只能指定一次"
+            )
         points = []
         for item in items:
             xy = item.split(":")
@@ -357,6 +404,11 @@ def adjustment_args(args):
         changes["crop"] = args.crop
     if args.rotate is not None:
         changes["rotation"] = args.rotate
+    angle = getattr(args, "straighten", None)
+    if angle is not None:
+        if not -45 <= angle <= 45:
+            raise ValueError("拉直角度范围为 −45 至 +45 度")
+        changes["straighten"] = angle
     return changes
 
 
@@ -453,7 +505,7 @@ def main():
     from workspace_paths import read_paths, save_paths
 
     paths = read_paths()
-    parser.add_argument("--version", action="version", version="Phocus CLI 1.0.0")
+    parser.add_argument("--version", action="version", version="Phocus CLI 1.1.0")
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("capabilities", help="列出参数、数值范围和可用路径")
     inspect = sub.add_parser("inspect", help="离线读取当前调整、版本和历史")
@@ -482,6 +534,7 @@ def main():
             metavar="CHANNEL_OR_X:Y",
             help="例如 --curve rgb 0:0 128:160 255:255",
         )
+        command.add_argument("--straighten", type=float)
         command.add_argument("--rotate", type=int, choices=(0, 90, 180, 270))
     noise = sub.add_parser("hnnr", help="使用官方 HNNR 桌面窗口生成新的降噪 RAW")
     noise.add_argument("source", type=Path)
@@ -532,7 +585,55 @@ def main():
     mcp = sub.add_parser("mcp", help="启动可选的 stdio MCP 服务")
     for key in paths:
         mcp.add_argument("--" + key, type=Path, default=paths[key])
+    frames = sub.add_parser("frames", help="使用 Windows Phocus 原版 DLL 的九款画框")
+    modes = frames.add_subparsers(dest="frame_command", required=True)
+    modes.add_parser("list", help="列出 PC 4.2 官方款式")
+    setup = modes.add_parser("setup", help="在本机准备可选的 Windows 渲染引擎")
+    setup.add_argument("--installer", type=Path)
+    export_frames = modes.add_parser(
+        "export", help="用官方画框渲染器处理未加框的 SDR JPEG"
+    )
+    export_frames.add_argument("source", type=Path)
+    export_frames.add_argument("--watch", type=Path, default=paths["watch"])
+    export_frames.add_argument("--spool", type=Path, default=paths["spool"])
+    export_frames.add_argument("--styles", nargs="+", required=True)
+    export_frames.add_argument("--long-edge", type=int)
+    export_frames.add_argument("--quality", type=int, default=95)
+    export_frames.add_argument("--out", type=Path, default=paths["out"])
     args = parser.parse_args()
+    if args.cmd == "frames":
+        from official_frames import render_frames, style_list
+
+        if args.frame_command == "list":
+            return style_list()
+        if args.frame_command == "setup":
+            setup_script = Path(__file__).resolve().parent / "frames" / "setup.py"
+            cmd = [sys.executable, str(setup_script)]
+            if args.installer:
+                cmd.extend(["--installer", str(args.installer.resolve())])
+            sys.exit(subprocess.call(cmd))
+        source = args.source.resolve()
+        if source.suffix.lower() == ".3fr":
+            master = render(
+                source,
+                args.watch.resolve(),
+                args.spool.resolve(),
+                args.out.resolve(),
+                {},
+                90,
+            )
+            result = render_frames(
+                Path(master["output"]),
+                args.out.resolve(),
+                args.styles,
+                args.long_edge,
+                args.quality,
+            )
+            result["master"] = master
+            return result
+        return render_frames(
+            source, args.out.resolve(), args.styles, args.long_edge, args.quality
+        )
     if args.cmd == "paths":
         updates = {
             k: getattr(args, k).expanduser().resolve()
@@ -588,7 +689,9 @@ def main():
             "current": data["CurrentIx"],
             "curves": {
                 name: [[pt["X"], pt["Y"]] for pt in curve.get("Points", [])]
-                for name, curve in zip(CURVES, values.get("Gradations", []))
+                for name, index in CURVES.items()
+                if index < len(values.get("Gradations", []))
+                for curve in [values["Gradations"][index]]
             },
             "history": [row.get("Name") for row in data["ImageSettings"]],
             "geometry": data["ImageSettings"][data["CurrentIx"]]
@@ -598,7 +701,7 @@ def main():
             .get("ImageDescription", {})
             .get("Rotation"),
             "values": {
-                k: (round(math.log2(values[f]), 3) if k == "exposure" else values[f])
+                k: read_scalar(k, values[f])
                 for k, (f, *_) in FIELDS.items()
                 if f in values
             },

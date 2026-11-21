@@ -71,6 +71,8 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
                     "denoise_raw",
                     "watermark_result",
                     "export_photos",
+                    "list_official_frames",
+                    "export_official_frames",
                     "inspect_photo",
                     "make_variant",
                     "render_photos",

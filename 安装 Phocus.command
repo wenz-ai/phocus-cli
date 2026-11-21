@@ -3,12 +3,12 @@ set -euo pipefail
 src="$(cd "$(dirname "$0")" && pwd)"
 root="$HOME/.local/share/phocus-cli"
 mkdir -p "$root/installs" "$HOME/.local/bin"
-dest="$(mktemp -d "$root/installs/1.0.0.XXXXXX")"
+dest="$(mktemp -d "$root/installs/1.1.0.XXXXXX")"
 ready=false
 trap 'if [ "$ready" = false ]; then rm -rf "$dest"; fi' EXIT
 echo '正在安装 Phocus CLI 和 Codex Skill…'
-cp "$src"/{phocus,watermark.py,workspace_paths.py,mcp_server.py} "$dest/"
-cp -R "$src/native" "$src/skills" "$dest/"
+cp "$src"/{phocus,watermark.py,workspace_paths.py,mcp_server.py,official_frames.py} "$dest/"
+cp -R "$src/native" "$src/skills" "$src/frames" "$dest/"
 py=''
 for candidate in "$(command -v python3 || true)" /opt/homebrew/bin/python3 /usr/local/bin/python3; do
   [ -x "$candidate" ] && [ "$candidate" != /usr/bin/python3 ] || continue

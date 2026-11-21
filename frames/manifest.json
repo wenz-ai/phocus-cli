@@ -1,0 +1,15 @@
+{
+  "PhocusApi64.dll": "fbe6c7771983001832f7ee75212f973efe0994753fd740030b15314358dd5c80",
+  "libde265.dll": "787e68dc22957bbce7c2116312b838ebefef914a1152a5bd97813150d934ce64",
+  "libusb-1.0.dll": "df010aeebc45ad1e0a98e0c405346fffaf77842e41e9a394ef1314f256b44ac8",
+  "PhotoFrames/EarthExplorerLogo.png": "72df2ca58fc6d4136ebc159fff727d7e5c1a165806dc587583f79a827ae85e4b",
+  "PhotoFrames/EarthExplorerLogoBlackHorizontal.png": "c0b9178332f14e1e917f167a8513de1f49d45e1a87adfdb251d2c4fafde9967f",
+  "PhotoFrames/EarthExplorerLogoBlackVertical.png": "72bf8eab306e267993ac7312aa80f4ac62a68cd05109b482ce9c28fb69ca6a18",
+  "PhotoFrames/HLogo.png": "d922cfddd990983e8e2cd152bb0f26c0c42977f581f7974da474f6743084a6ec",
+  "PhotoFrames/HLogoWhite.png": "2197139d1dc6a970c59d2c8e29159e20c9328c260e69d24b6a895782f83d95de",
+  "PhotoFrames/HasselbladLogo.png": "c1d4e3a106f779c2f0656580313b53a65964d01af3471af8307082984ed46cf0",
+  "PhotoFrames/HasslbladLogoOrange.png": "04594e4247bd0f42badbd443964a6c82fd6bd6e328fea16b04fe7f9eaa8cbb42",
+  "onnxruntime.dll": "903c92c54acc57caa77d44d4c856c829eb82f5cf6755b47367a8153bd3fabeb6",
+  "DirectML.dll": "18c82a9c06141f7e96241adad1a35bebf4780a72d8eeeb107ec12f748391b3f5",
+  "dbghelp.dll": "8f27981908269fbf2c9672ca479c3034928be57769094c1aa825f5d313e1dcd5"
+}

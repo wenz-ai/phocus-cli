@@ -18,7 +18,7 @@ phocus inspect /photos/sample.3FR
 phocus variant /photos/sample.3FR --crop 0.1 0.1 0.9 0.9 --rotate 90
 ```
 
-`--curve` 可重复指定 rgb、red、green、blue 四个通道。输入为 0–255 的 X:Y 控制点，X 由小到大，带 0 和 255 两端。其他通道沿用照片已有设置。`tint_native` 使用 Phocus sidecar 原始数值，范围 −0.015 至 +0.015，负值偏洋红、正值偏绿。裁切坐标是 0–1 的左、上、右、下边界。更多数值范围见 `phocus capabilities`。
+`--curve` 可重复指定 rgb、red、green、blue 和 luma（亮度）通道。输入为 0–255 的 X:Y 控制点，X 由小到大，带 0 和 255 两端。其他通道沿用照片已有设置。`tint_native` 使用 Phocus sidecar 原始数值，范围 −0.015 至 +0.015，负值偏洋红、正值偏绿。裁切坐标是 0–1 的左、上、右、下边界。更多数值范围见 `phocus capabilities`。
 
 ## 导出选项
 
@@ -49,6 +49,10 @@ Codex 中希望同时使用 MCP，可运行：
 codex mcp add phocus -- "$(command -v phocus)" mcp
 ```
 
-新开对话后，客户端可以发现 `capabilities`、`inspect_photo`、`make_variant`、`denoise_raw`、`render_photos`、`export_photos`、`watermark_result` 和 `preview_result`。预览支持原尺寸局部。MCP 的相对原片路径基于 library，已输出成片可传绝对路径。
+新开对话后，客户端可以发现 `capabilities`、`inspect_photo`、`make_variant`、`denoise_raw`、`render_photos`、`export_photos`、`watermark_result` 、`preview_result`、`list_official_frames` 和 `export_official_frames`。预览支持原尺寸局部。MCP 的相对原片路径基于 library，已输出成片可传绝对路径。
 
 普通渲染使用 Phocus 当前输出预设。HNNR 使用 macOS 辅助功能和窗口定向接口，要求可见主窗口及缩略图面板。发行包为 Apple Silicon 附带原生 helper，使用源码时首次运行 HNNR 需 Xcode 命令行工具。
+
+## 更多原生调整
+
+`sharpen_radius` 以像素为单位，步长 0.1，可搭配 `sharpen_threshold`、`sharpen_dark_limit`。黑白通道混合使用 `mono_red`、`mono_green`、`mono_blue`，写入时启用 Phocus 黑白处理。颗粒支持 `grain_type`（0–2）和 `grain_color`。镜头与透视参数见 `phocus capabilities` 中的 `lens_corrections`、`vignette_amount`、`defringe_*` 和 `keystone_*`。在 `variant` 或 `render` 中传入 `--straighten 3.5` 可拉直 3.5 度，也可配合直角旋转。

@@ -30,6 +30,10 @@
 
 如果已经自定义过目录，运行 `phocus paths` 可查看实际位置。
 
+## 导出哈苏专属画框
+
+可选的 Windows 画框引擎支持 7 款 Hasselblad 与 2 款 Earth Explorer。准备好本机引擎后，在 Codex 里说「用官方 Explorer 1 给这张照片加框」即可。已有带 EXIF 的 SDR JPEG 可以直接用，RAW 会先由 Mac 版 Phocus 出母版。[画框安装与示例](docs/frames.md)
+
 ## 我该用哪种方式？
 
 | 你在哪里用 | 用什么 |
