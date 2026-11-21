@@ -127,16 +127,17 @@ class LinearMask(BaseModel):
     ev: float = Field(ge=-4, le=4)
 
 
-def settings(
+def adjustment_args(
+    *,
     changes,
-    crop=None,
-    rotate=None,
-    curves=None,
-    straighten=None,
-    levels=None,
-    color_bands=None,
-    clear_color_bands=False,
-    linear_masks=None,
+    crop,
+    rotate,
+    curves,
+    straighten,
+    levels,
+    color_bands,
+    clear_color_bands,
+    linear_masks,
 ):
     args = ["--set", *(f"{k}={v}" for k, v in changes.items())] if changes else []
     if crop is not None:
@@ -169,7 +170,7 @@ def settings(
     return args
 
 
-@server.tool()
+@server.tool(title="检查原片 · 可调参数")
 def capabilities() -> dict:
     """List edit keys, numeric ranges and native sidecar fields."""
     return call("capabilities")
@@ -184,7 +185,7 @@ def sdr_path(file: str) -> Path:
     return path
 
 
-@server.tool()
+@server.tool(title="检查成片 · 曝光端点")
 def analyze_exposure(
     file: str, region: tuple[float, float, float, float] | None = None
 ) -> dict:
@@ -193,19 +194,19 @@ def analyze_exposure(
     return call("exposure-stats", sdr_path(file), *args)
 
 
-@server.tool()
+@server.tool(title="检查成片 · 颜色取样")
 def sample_color(file: str, x: float, y: float, radius: int = 4) -> dict:
     """Sample an sRGB preview at normalized (x,y) from top left. estimated_hue is a starting point for a color band; neutral patches return null."""
     return call("sample", sdr_path(file), "--at", x, y, "--radius", radius)
 
 
-@server.tool()
+@server.tool(title="检查原片 · 已存调整")
 def inspect_photo(photo: str) -> dict:
     """Read saved adjustments and version names from a RAW's own sidecar, without opening Phocus."""
     return call("inspect", source_path(photo))
 
 
-@server.tool()
+@server.tool(title="处理 RAW · 创建可编辑副本")
 def make_variant(
     photo: str,
     changes: dict[str, float] | None = None,
@@ -224,21 +225,21 @@ def make_variant(
         source_path(photo),
         "--out",
         output,
-        *settings(
-            changes,
-            crop,
-            rotate,
-            curves,
-            straighten,
-            levels,
-            color_bands,
-            clear_color_bands,
-            linear_masks,
+        *adjustment_args(
+            changes=changes,
+            crop=crop,
+            rotate=rotate,
+            curves=curves,
+            straighten=straighten,
+            levels=levels,
+            color_bands=color_bands,
+            clear_color_bands=clear_color_bands,
+            linear_masks=linear_masks,
         ),
     )
 
 
-@server.tool()
+@server.tool(title="处理 RAW · 渲染母版")
 def render_photos(
     photos: list[str],
     changes: dict[str, float] | None = None,
@@ -264,44 +265,37 @@ def render_photos(
         spool,
         "--out",
         output,
-        *settings(
-            changes,
-            crop,
-            rotate,
-            curves,
-            straighten,
-            levels,
-            color_bands,
-            clear_color_bands,
-            linear_masks,
+        *adjustment_args(
+            changes=changes,
+            crop=crop,
+            rotate=rotate,
+            curves=curves,
+            straighten=straighten,
+            levels=levels,
+            color_bands=color_bands,
+            clear_color_bands=clear_color_bands,
+            linear_masks=linear_masks,
         ),
         *delivery_args(delivery),
     )
 
 
-@server.tool()
+@server.tool(title="交付 · 批量导出")
 def export_photos(files: list[str], delivery: Delivery) -> list[dict]:
     """Batch export finished SDR JPEG/PNG files from library or output, with optional sizing, sRGB and watermark."""
     if not files:
         raise ValueError("请选择至少一张已渲染图片")
-    paths = []
-    for file in files:
-        path = (library / file).resolve(strict=True)
-        if not any(
-            path.is_relative_to(root) for root in (library, output)
-        ) or path.suffix.lower() not in {".jpg", ".jpeg", ".png"}:
-            raise ValueError("请选择 library 或输出目录内的 JPEG/PNG")
-        paths.append(path)
+    paths = [sdr_path(file) for file in files]
     return call("export", *paths, "--out", output, *delivery_args(delivery))
 
 
-@server.tool()
+@server.tool(title="交付 · 查看画框款式")
 def list_official_frames() -> dict:
     """List all 7 Hasselblad and 2 Earth Explorer styles in the Windows Phocus 4.2 picker."""
     return call("frames", "list")
 
 
-@server.tool()
+@server.tool(title="交付 · 导出官方画框")
 def export_official_frames(
     file: str, styles: list[str], long_edge: int | None = None, quality: int = 95
 ) -> dict:
@@ -334,7 +328,7 @@ def export_official_frames(
     )
 
 
-@server.tool()
+@server.tool(title="处理 RAW · HNNR 降噪")
 def denoise_raw(photo: str, mode: str) -> dict:
     """Submit the native HNNR mode (purity/detail). Uses Phocus desktop UI; requires its viewed queue empty and auto-export off."""
     return call(
@@ -342,7 +336,7 @@ def denoise_raw(photo: str, mode: str) -> dict:
     )
 
 
-@server.tool()
+@server.tool(title="交付 · 单张加水印")
 def watermark_result(
     file: str,
     text: str | None = None,
@@ -383,7 +377,7 @@ def watermark_result(
     )
 
 
-@server.tool()
+@server.tool(title="检查成片 · 整图或局部预览")
 def preview_result(file: str, crop: list[int] | None = None) -> Image:
     """Return a 1280px overview, or a native-resolution crop [x, y, width, height] from the top left."""
     path = (output / file).resolve(strict=True)
