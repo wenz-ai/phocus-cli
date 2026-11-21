@@ -194,6 +194,8 @@ def inspect_masks(settings):
         }
         if edits:
             entry["adjustments"] = edits
+        if layer.get("LayerType") == 2 and isinstance(layer.get("TileStringList"), list):
+            entry["brush"] = {"painted_tiles": sum(bool(tile.strip()) for tile in layer["TileStringList"] if isinstance(tile, str))}
         gradients = []
         for g in layer.get("GradientList", []):
             if all(

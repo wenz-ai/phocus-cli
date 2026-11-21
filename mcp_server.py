@@ -143,6 +143,15 @@ class RadialMask(BaseModel):
     ev: float = Field(ge=-4, le=4)
 
 
+class BrushStroke(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str
+    mode: Literal["paint", "erase"] = "paint"
+    radius: float = Field(gt=0, le=0.5)
+    ev: float = Field(ge=-4, le=4)
+    points: list[tuple[float,float]] = Field(min_length=1, max_length=256)
+
+
 def adjustment_args(
     *,
     changes,
@@ -156,6 +165,7 @@ def adjustment_args(
     linear_masks,
     radial_masks,
     layer_adjustments,
+    brush_strokes,
 ):
     args = ["--set", *(f"{k}={v}" for k, v in changes.items())] if changes else []
     if crop is not None:
@@ -185,6 +195,8 @@ def adjustment_args(
         args.extend(["--linear-mask", mask.name, *mask.full, *mask.zero, mask.ev])
     for mask in radial_masks or []:
         args.extend(["--radial-mask", mask.name, *mask.center, *mask.radii, mask.angle, mask.feather, mask.side, mask.ev])
+    for stroke in brush_strokes or []:
+        args.extend(["--brush-stroke", stroke.name, stroke.mode, stroke.radius, stroke.ev, *(f"{x}:{y}" for x, y in stroke.points)])
     for name, edits in (layer_adjustments or {}).items():
         for field, value in edits.items():
             args.extend(["--layer-adjust", name, field, value])
@@ -243,6 +255,7 @@ def make_variant(
     linear_masks: list[LinearMask] | None = None,
     radial_masks: list[RadialMask] | None = None,
     layer_adjustments: dict[str, dict[str, float]] | None = None,
+    brush_strokes: list[BrushStroke] | None = None,
 ) -> dict:
     """Create an editable RAW copy offline. Crop is normalized [left, top, right, bottom]; rotate is degrees CCW."""
     return call(
@@ -262,6 +275,7 @@ def make_variant(
             linear_masks=linear_masks,
             radial_masks=radial_masks,
             layer_adjustments=layer_adjustments,
+            brush_strokes=brush_strokes,
         ),
     )
 
@@ -280,6 +294,7 @@ def render_photos(
     linear_masks: list[LinearMask] | None = None,
     radial_masks: list[RadialMask] | None = None,
     layer_adjustments: dict[str, dict[str, float]] | None = None,
+    brush_strokes: list[BrushStroke] | None = None,
     delivery: Delivery | None = None,
     batch_id: str | None = None,
 ) -> list[dict]:
@@ -307,6 +322,7 @@ def render_photos(
             linear_masks=linear_masks,
             radial_masks=radial_masks,
             layer_adjustments=layer_adjustments,
+            brush_strokes=brush_strokes,
         ),
         *delivery_args(delivery),
         *(["--batch-id", batch_id] if batch_id is not None else []),
