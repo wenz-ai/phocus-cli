@@ -189,45 +189,53 @@ def prepare(source, requested, long_edge):
     return work, styles, meta, profile.tobytes()
 
 
+def ensure_backend():
+    if not shutil.which("docker"):
+        raise ValueError("本机尚未安装可选的 Windows 画框引擎，请阅读 docs/frames.md")
+    inspect = [
+        "docker",
+        "context",
+        "inspect",
+        CONTEXT,
+        "--format",
+        "{{.Endpoints.docker.Host}}",
+    ]
+    endpoint = subprocess.run(inspect, text=True, capture_output=True, check=False)
+    if endpoint.returncode == 0:
+        if not endpoint.stdout.strip().startswith("unix://"):
+            raise ValueError("专用画框环境必须使用本机 Docker socket")
+        if (
+            subprocess.run(
+                ["docker", "--context", CONTEXT, "info", "--format", "{{.ID}}"],
+                capture_output=True,
+                check=False,
+            ).returncode
+            == 0
+        ):
+            return
+    # Colima removes its managed Docker context on stop, but retains the profile.
+    home = Path(os.environ.get("COLIMA_HOME") or Path.home() / ".colima")
+    if not (home / "phocus-frames/colima.yaml").is_file() or not shutil.which("colima"):
+        raise ValueError("本机专用画框环境未配置，请先运行 phocus frames setup")
+    start = subprocess.run(
+        ["colima", "start", "phocus-frames", "--activate=false"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if start.returncode:
+        raise ValueError("画框环境启动失败：" + start.stderr[-600:])
+    endpoint = subprocess.run(inspect, text=True, capture_output=True, check=False)
+    if endpoint.returncode or not endpoint.stdout.strip().startswith("unix://"):
+        raise ValueError("未能验证启动后的本机 Docker socket")
+
+
 def render_frames(source, out, requested, long_edge=None, quality=95):
     from PIL import Image
 
     if long_edge is not None and not 1 <= long_edge <= 65535 or not 1 <= quality <= 100:
         raise ValueError("长边或 JPEG 质量超出范围")
-    if not shutil.which("docker"):
-        raise ValueError("本机尚未安装可选的 Windows 画框引擎，请阅读 docs/frames.md")
-    endpoint = subprocess.run(
-        [
-            "docker",
-            "context",
-            "inspect",
-            CONTEXT,
-            "--format",
-            "{{.Endpoints.docker.Host}}",
-        ],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if endpoint.returncode or not endpoint.stdout.strip().startswith("unix://"):
-        raise ValueError("本机专用画框环境未配置，请先运行 phocus frames setup")
-    if subprocess.run(
-        ["docker", "--context", CONTEXT, "info", "--format", "{{.ID}}"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    ).returncode:
-        if not shutil.which("colima"):
-            raise ValueError("无法启动专用 Colima 环境")
-        start = subprocess.run(
-            ["colima", "start", "phocus-frames", "--activate=false"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
-        )
-        if start.returncode:
-            raise ValueError("画框环境启动失败：" + start.stderr[-600:])
+    ensure_backend()
     work, styles, metadata, icc = prepare(source, requested, long_edge)
     out.mkdir(parents=True, exist_ok=True)
     command = [

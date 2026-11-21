@@ -505,7 +505,7 @@ def main():
     from workspace_paths import read_paths, save_paths
 
     paths = read_paths()
-    parser.add_argument("--version", action="version", version="Phocus CLI 1.1.0")
+    parser.add_argument("--version", action="version", version="Phocus CLI 1.1.1")
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("capabilities", help="列出参数、数值范围和可用路径")
     inspect = sub.add_parser("inspect", help="离线读取当前调整、版本和历史")
