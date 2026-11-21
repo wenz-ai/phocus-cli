@@ -17,7 +17,7 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
-from local_masks import inspect_masks, linear_args, radial_args, put_masks
+from local_masks import inspect_masks, linear_args, radial_args, put_masks, layer_adjustments, apply_layer_adjustments
 from tone_controls import (
     apply_levels,
     apply_bands,
@@ -168,6 +168,9 @@ def apply_offline(path, changes):
     for key, value in changes.items():
         if key == "masks":
             put_masks(settings, value)
+            continue
+        if key == "layer_adjustments":
+            apply_layer_adjustments(settings, value)
             continue
         if key == "levels":
             apply_levels(settings, value)
@@ -418,6 +421,9 @@ def adjustment_args(args):
         raise ValueError("同一次调用中的蒙版不能重名")
     if masks:
         changes["masks"] = masks
+    local = layer_adjustments(getattr(args, "layer_adjust", None))
+    if local:
+        changes["layer_adjustments"] = local
     levels = levels_args(getattr(args, "levels", None))
     if levels:
         changes["levels"] = levels
@@ -555,6 +561,7 @@ def main():
     run.add_argument("--set", nargs="+", default=[], metavar="KEY=VALUE")
     run.add_argument("--timeout", type=int, default=90)
     for command in (var, run):
+        command.add_argument("--layer-adjust", nargs=3, action="append", metavar=("NAME", "FIELD", "VALUE"))
         command.add_argument("--radial-mask", nargs=9, action="append",
                              metavar=("NAME", "CX", "CY", "RX", "RY", "DEG", "FEATHER", "SIDE", "EV"))
         command.add_argument(

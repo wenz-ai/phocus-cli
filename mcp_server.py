@@ -151,6 +151,7 @@ def adjustment_args(
     clear_color_bands,
     linear_masks,
     radial_masks,
+    layer_adjustments,
 ):
     args = ["--set", *(f"{k}={v}" for k, v in changes.items())] if changes else []
     if crop is not None:
@@ -180,6 +181,9 @@ def adjustment_args(
         args.extend(["--linear-mask", mask.name, *mask.full, *mask.zero, mask.ev])
     for mask in radial_masks or []:
         args.extend(["--radial-mask", mask.name, *mask.center, *mask.radii, mask.angle, mask.feather, mask.side, mask.ev])
+    for name, edits in (layer_adjustments or {}).items():
+        for field, value in edits.items():
+            args.extend(["--layer-adjust", name, field, value])
     if clear_color_bands:
         args.append("--clear-color-bands")
     return args
@@ -234,6 +238,7 @@ def make_variant(
     clear_color_bands: bool = False,
     linear_masks: list[LinearMask] | None = None,
     radial_masks: list[RadialMask] | None = None,
+    layer_adjustments: dict[str, dict[str, float]] | None = None,
 ) -> dict:
     """Create an editable RAW copy offline. Crop is normalized [left, top, right, bottom]; rotate is degrees CCW."""
     return call(
@@ -252,6 +257,7 @@ def make_variant(
             clear_color_bands=clear_color_bands,
             linear_masks=linear_masks,
             radial_masks=radial_masks,
+            layer_adjustments=layer_adjustments,
         ),
     )
 
@@ -269,6 +275,7 @@ def render_photos(
     clear_color_bands: bool = False,
     linear_masks: list[LinearMask] | None = None,
     radial_masks: list[RadialMask] | None = None,
+    layer_adjustments: dict[str, dict[str, float]] | None = None,
     delivery: Delivery | None = None,
 ) -> list[dict]:
     """Render RAW masters with optional SDR delivery copies. Curves map rgb/red/green/blue/luma to [x,y] points (0..255); crop is normalized LTRB and rotate is degrees CCW."""
@@ -294,6 +301,7 @@ def render_photos(
             clear_color_bands=clear_color_bands,
             linear_masks=linear_masks,
             radial_masks=radial_masks,
+            layer_adjustments=layer_adjustments,
         ),
         *delivery_args(delivery),
     )
