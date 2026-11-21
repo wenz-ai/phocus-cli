@@ -3,7 +3,7 @@ set -euo pipefail
 src="$(cd "$(dirname "$0")" && pwd)"
 root="$HOME/.local/share/phocus-cli"
 mkdir -p "$root/installs" "$HOME/.local/bin"
-dest="$(mktemp -d "$root/installs/1.3.0.XXXXXX")"
+dest="$(mktemp -d "$root/installs/1.3.1.XXXXXX")"
 ready=false
 trap 'if [ "$ready" = false ]; then rm -rf "$dest"; fi' EXIT
 echo '正在安装 Phocus CLI 和 Codex Skill…'

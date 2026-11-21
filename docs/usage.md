@@ -49,7 +49,16 @@ Codex 中希望同时使用 MCP，可运行：
 codex mcp add phocus -- "$(command -v phocus)" mcp
 ```
 
-新开对话后，客户端可以发现 `capabilities`、`inspect_photo`、`make_variant`、`denoise_raw`、`render_photos`、`export_photos`、`watermark_result` 、`preview_result`、`list_official_frames` 和 `export_official_frames`。预览支持原尺寸局部。MCP 的相对原片路径基于 library，已输出成片可传绝对路径。
+新开 MCP 会话后，可以按手上的文件和任务选择工具。
+
+| 工作步骤 | 工具 | 什么时候用 |
+|---|---|---|
+| 检查原片 | `capabilities`、`inspect_photo` | 查调整范围，读 RAW 已保存的版本和参数。 |
+| 处理 RAW | `make_variant`、`render_photos`、`denoise_raw` | 留可编辑副本、用同一配方渲染一组、做官方 HNNR。 |
+| 检查成片 | `preview_result`、`sample_color`、`analyze_exposure` | 看全图或原尺寸细节，查局部色相、高光和暗部。 |
+| 交付 | `export_photos`、`watermark_result`、`list_official_frames`、`export_official_frames` | 批量缩放或加水印，给单张成片加签名，选款并导出官方画框。 |
+
+原片相对路径从 library 起算。`preview_result` 和 `watermark_result` 的相对路径从成片目录起算。渲染结果返回的绝对路径可以直接交给后续工具。
 
 普通渲染使用 Phocus 当前输出预设。HNNR 使用 macOS 辅助功能和窗口定向接口，要求可见主窗口及缩略图面板。发行包为 Apple Silicon 附带原生 helper，使用源码时首次运行 HNNR 需 Xcode 命令行工具。
 

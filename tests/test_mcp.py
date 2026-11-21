@@ -81,6 +81,12 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
                     "preview_result",
                 },
             )
+            schemas = {t.name: t.inputSchema["properties"] for t in tools.tools}
+            variant_fields = dict(schemas["make_variant"])
+            render_fields = dict(schemas["render_photos"])
+            del variant_fields["photo"], render_fields["photos"], render_fields["delivery"]
+            self.assertEqual(variant_fields, render_fields)
+            self.assertTrue(all(t.title for t in tools.tools))
             r = await client.call_tool("capabilities", {})
             self.assertFalse(r.isError)
             self.assertEqual(
