@@ -75,3 +75,23 @@ class LinearMaskTests(unittest.TestCase):
             layer_adjustments([["face", "temperature", 200]])
         with self.assertRaises(ValueError):
             apply_layer_adjustments(c, {"missing": {"clarity": 9}})
+
+    def test_brush_eraser_and_tiled_geometry(self):
+        import base64
+        import io
+        from PIL import Image
+        from brush_masks import apply_strokes, stroke_args
+
+        c = {"AdjustmentLayers": {"streamableVersion": 1, "Width": 1024, "Height": 512, "TileFactor": 2}}
+        def stroke(mode, radius, *points):
+            return stroke_args([["face", mode, radius, 1, *points]])
+        apply_strokes(c, stroke("paint", .08, ".2:.5", ".8:.5"))
+        tiles = c["AdjustmentLayers"]["Layers"][0]["TileStringList"]
+        before = tiles[1]
+        apply_strokes(c, stroke("erase", .02, ".2:.5"))
+        self.assertEqual(before, tiles[1])
+        with Image.open(io.BytesIO(base64.b64decode(tiles[0]))) as tile:
+            self.assertEqual(tile.getpixel((102,128)), 0)
+            self.assertEqual(tile.getpixel((150,128)), 65535)
+        with self.assertRaises(ValueError):
+            stroke("paint", .01, "1.1:.2")

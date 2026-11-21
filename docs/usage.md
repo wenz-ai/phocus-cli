@@ -104,6 +104,12 @@ MCP 的 `render_photos` 和 `make_variant` 支持同样的设置。例如：
 
 MCP 调用 `analyze_exposure` 时传入 `{"file":"成片.jpg","region":[0,0,1,0.3]}`。例如拍演出时，可以单独检查红色舞台灯附近的红通道。这个数值反映当前导出效果；判断 RAW 还有多少可恢复细节，需要调整曝光再渲染比较。
 
+## 画笔与橡皮擦
+
+`--brush-stroke 衣服 paint 0.02 0.5 0.40:0.55 0.48:0.60` 用圆头笔沿路径在名为“衣服”的图层涂抹，曝光为 +0.5 EV。坐标是未裁切原片左上角起算的 0–1，半径是原图短边的比例。单点画圆，多个点连成笔画。重复参数按顺序叠加；用 `erase` 擦同名图层，再配合 `--layer-adjust` 调整颜色。首版支持硬边圆笔、Phocus TileFactor=2 的 16 位蒙版，适用性已在 X2D 100C 验证。
+
+MCP 的对应参数为 `brush_strokes: [{"name":"衣服","mode":"paint","radius":0.02,"ev":0.5,"points":[[0.4,0.55],[0.48,0.60]]}]`。图层保存后可在 Phocus 内继续涂改。
+
 ## 给调节层校色
 
 `--layer-adjust 人脸 temperature 13 --layer-adjust 人脸 highlights 27` 只改变名为“人脸”的原生调节层。可在同一次调用中先创建线性或径向蒙版。MCP 的对应字段为 `layer_adjustments: {"人脸":{"temperature":13,"highlights":27}}`。temperature、tint、highlights、shadows、saturation、clarity 为 −100 至 100；sharpness 为 −500 至 500；moire 为 −5 至 5。色温使用 Phocus 局部面板的相对刻度。已有图层的启用状态、蒙版和未指定参数保留。
